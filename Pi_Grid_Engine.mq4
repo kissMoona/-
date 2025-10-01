@@ -4,17 +4,15 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, Rex"
 #property link      "https://github.com/yourname/Pi_Grid_Engine"
-#property version   "1.20"
+#property version   "1.21"
 #property description "Π Grid Engine - Dual Mode Trading System"
 #property strict
 
 //--- 输入参数
 //--- 面板设置
 input bool   InpShowPanel = true;          // 是否显示信息面板
-input int    InpPanelX = 100;               // 面板X轴位置
+input int    InpPanelX = 150;               // 面板X轴位置
 input int    InpPanelY = 100;               // 面板Y轴位置
-input int    InpPanelFontSize = 15;        // 面板字体大小
-
 //--- 基础设置
 input int    InpMagicNo = 31415926;        // Magic Number
 input int    InpTradingMode = 0;           // Trading Mode (0=Grid, 1=Random)
@@ -34,10 +32,16 @@ input double InpGridStep = 10.0;           // 网格间隔（美元）
 input int    InpRandomInterval = 300;       // 随机交易间隔（秒）
 
 //--- 警报设置
-input bool   InpEnableAlerts = true;       // 启用警报
+input bool   InpEnableAlerts = false;       // 启用警报
 input int    InpMaxOrdersAlert = 40;       // 持仓数警报阈值
 input double InpMarginAlert = 80.0;        // 保证金使用率警报(%)
 input double InpDrawdownAlert = 15.0;      // 浮亏百分比警报(%)
+
+//--- 风险控制
+input double InpMaxDailyLoss = 100.0;      // 日最大亏损($)
+input bool   InpEnableDailyLossLimit = false; // 启用日亏损限制
+
+// Telegram功能已简化
 
 //--- 全局变量
 datetime g_last_trade_time = 0; // 用于存储最后开仓时间
@@ -51,6 +55,15 @@ double g_today_profit = 0.0; // 今日盈亏
 int g_max_positions = 0; // 历史最大持仓数
 datetime g_last_reset_date = 0; // 上次重置日期
 double g_day_start_balance = 0.0; // 当日开始余额
+
+//--- 品种选择器变量
+string g_available_symbols[]; // 可用品种列表
+bool g_symbol_enabled[]; // 品种是否启用交易
+bool g_symbol_first_order_opened[]; // 品种是否已开首单
+int g_symbol_scroll_offset = 0; // 滚动偏移量
+int g_symbols_per_row = 4; // 每行显示品种数
+int g_symbol_rows = 4; // 显示行数
+int g_symbols_per_page = 16; // 每页显示品种数 (4x4)
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -71,19 +84,27 @@ int OnInit()
     g_max_positions = 0;
     g_last_reset_date = TimeCurrent();
     g_day_start_balance = AccountBalance();
+    
+    //--- 初始化品种列表
+    LoadAvailableSymbols();
 
-    Print("[INIT] Π Grid Engine v1.20 Started");
+    Print("[INIT] Π Grid Engine v1.21 Started");
     if(InpTradingMode == 0)
         Print("[INIT] Mode: Grid Trading | Grid Step: $", InpGridStep);
     else
         Print("[INIT] Mode: Random Trading | Interval: ", InpRandomInterval, "s");
     
-    //--- 创建按钮（调整位置以适应新面板）
+    //--- 创建按钮（使用中性颜色）
     if(InpShowPanel)
     {
-        CreateButton("YDA_Btn_CloseAll", InpPanelX + 10, InpPanelY + 370, 140, 35, "一键平仓", clrWhite, clrRed);
-        CreateButton("YDA_Btn_BuyOnly", InpPanelX + 160, InpPanelY + 370, 140, 35, "只开多", clrWhite, clrGreen);
-        CreateButton("YDA_Btn_SellOnly", InpPanelX + 310, InpPanelY + 370, 140, 35, "只开空", clrWhite, clrOrangeRed);
+        // 操作按钮（放在面板外部下方，确保可见）
+        CreateButton("YDA_Btn_CloseAll", InpPanelX + 10, InpPanelY + 330, 140, 28, "一键平仓", clrWhite, C'180,50,50');
+        CreateButton("YDA_Btn_BuyOnly", InpPanelX + 160, InpPanelY + 330, 140, 28, "只开多", clrWhite, C'60,60,80');
+        CreateButton("YDA_Btn_SellOnly", InpPanelX + 310, InpPanelY + 330, 140, 28, "只开空", clrWhite, C'60,60,80');
+        
+        
+        // 品种选择器说明文字（不需要翻页按钮了）
+        // 所有品种一次性显示
     }
 
     return(INIT_SUCCEEDED);
@@ -95,12 +116,23 @@ int OnInit()
 void OnDeinit(const int reason)
 {
     Print("[DEINIT] Π Grid Engine Stopped | Reason Code: ", reason);
+    
+    //--- 保存品种启用状态（除非是账户切换或删除EA）
+    if(reason != REASON_ACCOUNT && reason != REASON_REMOVE)
+    {
+        SaveSymbolStates();
+    }
+    
     //--- 清理面板对象
     if(InpShowPanel)
     {
         ObjectsDeleteAll(0, "YDA_Panel_");
         ObjectsDeleteAll(0, "YDA_Btn_");
+        ObjectsDeleteAll(0, "YDA_Sidebar_");
+        ObjectsDeleteAll(0, "YDA_SymbolSelector_");
         ObjectDelete(0, "YDA_Panel_BG");
+        ObjectDelete(0, "YDA_Sidebar_BG");
+        ObjectDelete(0, "YDA_SymbolSelector_BG");
     }
 }
 
@@ -117,7 +149,10 @@ void OnTick()
     
     //--- 更新面板
     if(InpShowPanel)
+    {
         UpdateDashboard();
+        DisplaySymbolSelector(InpPanelX, InpPanelY);
+    }
     
     //--- 检查警报
     if(InpEnableAlerts)
@@ -128,6 +163,10 @@ void OnTick()
 
     //--- 检查是否在交易时间内 (只对开仓有效)
     if(!IsTradeTime())
+        return;
+    
+    //--- 检查日亏损限制
+    if(!CheckDailyLossLimit())
         return;
 
     //--- 执行交易逻辑
@@ -145,52 +184,125 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
     //--- 处理按钮点击事件
     if(id == CHARTEVENT_OBJECT_CLICK)
     {
+        Print("[EVENT] Button clicked: ", sparam);  // 调试信息
+        
         if(sparam == "YDA_Btn_CloseAll")
         {
-            CloseAllPositions();
+            // 立即重置按钮状态
             ObjectSetInteger(0, "YDA_Btn_CloseAll", OBJPROP_STATE, false);
+            PlaySound("alert.wav");
+            CloseAllPositions();
         }
         else if(sparam == "YDA_Btn_BuyOnly")
         {
+            // 立即重置按钮状态
+            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_STATE, false);
+            PlaySound("ok.wav");
             ToggleBuyOnlyMode();
+            // 立即更新按钮显示
+            UpdateButtonStates();
+            ChartRedraw();
         }
         else if(sparam == "YDA_Btn_SellOnly")
         {
+            // 立即重置按钮状态
+            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_STATE, false);
+            PlaySound("ok.wav");
             ToggleSellOnlyMode();
+            // 立即更新按钮显示
+            UpdateButtonStates();
+            ChartRedraw();
+        }
+        // 手数调整按钮已移除
+        else if(StringFind(sparam, "YDA_Btn_Symbol_") == 0)
+        {
+            // 品种按钮点击 - 切换启用/禁用
+            string idx_str = StringSubstr(sparam, 15); // 提取索引
+            int idx = (int)StringToInteger(idx_str);
+            if(idx >= 0 && idx < ArraySize(g_available_symbols))
+            {
+                // 立即重置按钮状态
+                ObjectSetInteger(0, sparam, OBJPROP_STATE, false);
+                
+                // 播放点击音效
+                PlaySound("tick.wav");
+                
+                // 先更新颜色（即时视觉反馈）
+                bool will_enable = !g_symbol_enabled[idx];
+                UpdateSymbolButtonColor(idx, will_enable);
+                
+                // 强制刷新图表
+                ChartRedraw();
+                
+                // 然后执行开单/平仓操作（异步）
+                ToggleSymbol(idx);
+            }
         }
     }
 }
 
 
 //+------------------------------------------------------------------+
-//| 管理单个交易逻辑                                                  |
+//| 获取持仓统计信息（统计所有启用品种）                              |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//| 生成有趣的订单备注 (去月球/下地狱)                             |
-//+------------------------------------------------------------------+
-string GetDirectionalComment(int direction)
+void GetPositionStats(int &long_pos, int &short_pos, double &total_pl)
 {
-    string to_the_moon[] = {
-        "To the Moon", "Rocket Launch", "Bull Charge", "Ignition Start", "Sky High",
-        "Lift Off", "Apollo Mission", "Galaxy Quest", "Starlight", "Supernova",
-        "Orion Spur", "Zenith", "Apogee", "Celestial", "Light Speed"
-    };
-    string to_hell[] = {
-        "To Hell", "Bearish Dive", "Shorting Abyss", "Gravity Pull", "Underground",
-        "Free Fall", "Hades Bound", "Into the Void", "Black Hole", "Earth Core",
-        "Tartarus", "Nadir", "Perigee", "Chthonic", "Event Horizon"
-    };
+    long_pos = 0;
+    short_pos = 0;
+    total_pl = 0.0;
     
-    int random_index = MathRand() % 15;
+    for(int i = 0; i < OrdersTotal(); i++)
+    {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        {
+            if(OrderMagicNumber() == InpMagicNo)
+            {
+                // 检查订单品种是否在启用列表中
+                string order_symbol = OrderSymbol();
+                bool is_enabled_symbol = false;
+                
+                for(int j = 0; j < ArraySize(g_available_symbols); j++)
+                {
+                    if(g_available_symbols[j] == order_symbol && g_symbol_enabled[j])
+                    {
+                        is_enabled_symbol = true;
+                        break;
+                    }
+                }
+                
+                // 只统计已启用品种的订单
+                if(is_enabled_symbol)
+                {
+                    if(OrderType() == OP_BUY)
+                        long_pos++;
+                    else if(OrderType() == OP_SELL)
+                        short_pos++;
+                        
+                    total_pl += OrderProfit() + OrderSwap() + OrderCommission();
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 生成订单备注                                                      |
+//+------------------------------------------------------------------+
+string GenerateOrderComment(string prefix, string symbol_name, int order_number)
+{
+    // 格式：[模式]-品种-序号-日期时间
+    // 例如：Grid-XAUUSD-#15-1001_1046
     
-    if(direction == OP_BUY)
-    {
-        return to_the_moon[random_index];
-    }
-    else // OP_SELL
-    {
-        return to_hell[random_index];
-    }
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    
+    string time_str = StringFormat("%02d%02d_%02d%02d", 
+        dt.mon, dt.day, dt.hour, dt.min);
+    
+    string comment = StringFormat("%s-%s-#%d-%s", 
+        prefix, symbol_name, order_number, time_str);
+    
+    return comment;
 }
 
 //+------------------------------------------------------------------+
@@ -200,6 +312,19 @@ void ManageLogic_Grid()
 {
     int magic_number = InpMagicNo;
     double current_price = (SymbolInfoDouble(Symbol(), SYMBOL_ASK) + SymbolInfoDouble(Symbol(), SYMBOL_BID)) / 2.0;
+    
+    //--- 获取当前品种索引
+    int symbol_idx = -1;
+    for(int i = 0; i < ArraySize(g_available_symbols); i++)
+    {
+        if(g_available_symbols[i] == Symbol())
+        {
+            symbol_idx = i;
+            break;
+        }
+    }
+    
+    if(symbol_idx < 0) return; // 品种未找到
     
     //--- 检查是否有持仓
     int total_orders = 0;
@@ -214,8 +339,8 @@ void ManageLogic_Grid()
         }
     }
     
-    //--- 如果没有持仓，开第一个订单
-    if(total_orders == 0)
+    //--- 如果没有持仓且未开过首单，开第一个订单
+    if(total_orders == 0 && !g_symbol_first_order_opened[symbol_idx])
     {
         int direction;
         if(g_trade_mode == 1) // 只开多
@@ -225,12 +350,14 @@ void ManageLogic_Grid()
         else // 双向模式
             direction = (MathRand() % 2 == 0) ? OP_BUY : OP_SELL;
             
-        if(OpenOrder(direction, current_price, "First Order"))
+        string comment = GenerateOrderComment("Grid", Symbol(), 1);
+        if(OpenOrder(direction, current_price, comment))
         {
             g_first_order_price = current_price;
             g_first_order_type = direction;
             g_today_orders++;
-            Print("[GRID] First Order Opened | Price: ", DoubleToString(current_price, _Digits), " | Direction: ", (direction == OP_BUY ? "BUY" : "SELL"));
+            g_symbol_first_order_opened[symbol_idx] = true; // 标记已开首单
+            Print("═══ [网格] 首单开启 ═══ ", Symbol(), " | ", (direction == OP_BUY ? "多单" : "空单"), " | 价格: ", DoubleToString(current_price, _Digits));
         }
         return;
     }
@@ -269,13 +396,13 @@ void ManageLogic_Random()
     double current_price = (SymbolInfoDouble(Symbol(), SYMBOL_ASK) + SymbolInfoDouble(Symbol(), SYMBOL_BID)) / 2.0;
     
     //--- 生成订单备注
-    string comment = "Random - " + GetDirectionalComment(direction);
+    string comment = GenerateOrderComment("Random", Symbol(), g_today_orders + 1);
     
     //--- 开单
     if(OpenOrder(direction, current_price, comment))
     {
         g_today_orders++;
-        Print("[RANDOM] Order Opened | Price: ", DoubleToString(current_price, _Digits), " | Direction: ", (direction == OP_BUY ? "BUY" : "SELL"));
+        Print("═══ [随机] 新单 ═══ ", Symbol(), " | ", (direction == OP_BUY ? "多单" : "空单"), " | 价格: ", DoubleToString(current_price, _Digits));
     }
 }
 
@@ -328,10 +455,11 @@ void CheckAndOpenGridOrders(double current_price)
         {
             if(!HasOrderAtPrice(next_buy_level, grid_step / 2.0))
             {
-                if(OpenOrder(OP_BUY, next_buy_level, "Grid Buy"))
+                string comment = GenerateOrderComment("Grid", Symbol(), order_count + 1);
+                if(OpenOrder(OP_BUY, next_buy_level, comment))
                 {
                     g_today_orders++;
-                    Print("[GRID] BUY Order Opened | Level: ", DoubleToString(next_buy_level, _Digits));
+                    Print("▲ [网格-上涨] ", Symbol(), " | 多单 | ", DoubleToString(next_buy_level, _Digits), " | 今日: ", g_today_orders);
                 }
             }
         }
@@ -345,61 +473,18 @@ void CheckAndOpenGridOrders(double current_price)
         {
             if(!HasOrderAtPrice(next_sell_level, grid_step / 2.0))
             {
-                if(OpenOrder(OP_SELL, next_sell_level, "Grid Sell"))
+                string comment = GenerateOrderComment("Grid", Symbol(), order_count + 1);
+                if(OpenOrder(OP_SELL, next_sell_level, comment))
                 {
                     g_today_orders++;
-                    Print("[GRID] SELL Order Opened | Level: ", DoubleToString(next_sell_level, _Digits));
+                    Print("▼ [网格-下跌] ", Symbol(), " | 空单 | ", DoubleToString(next_sell_level, _Digits), " | 今日: ", g_today_orders);
                 }
             }
         }
     }
     
-    //--- 检查已有订单价格位置，价格回到该位置时开反向单
-    for(int i = 0; i < order_count; i++)
-    {
-        double order_price = order_prices[i];
-        int order_type = order_types[i];
-        
-        //--- 特殊规则：第一个订单位置如果是空单，价格回到该位置不开单
-        if(MathAbs(order_price - g_first_order_price) < grid_step / 2.0 && g_first_order_type == OP_SELL)
-        {
-            continue;
-        }
-        
-        //--- 如果当前价格接近某个已开订单的价格
-        if(MathAbs(current_price - order_price) < grid_step / 10.0)
-        {
-            //--- 检查该价格是否已有反向订单
-            bool has_opposite = false;
-            int opposite_type = (order_type == OP_BUY) ? OP_SELL : OP_BUY;
-            
-            for(int j = 0; j < order_count; j++)
-            {
-                if(MathAbs(order_prices[j] - order_price) < grid_step / 10.0 && order_types[j] == opposite_type)
-                {
-                    has_opposite = true;
-                    break;
-                }
-            }
-            
-            //--- 如果没有反向订单，则开反向单（考虑交易模式限制）
-            if(!has_opposite)
-            {
-                bool can_open = true;
-                if(g_trade_mode == 1 && opposite_type == OP_SELL) can_open = false; // 只开多模式，不开空单
-                if(g_trade_mode == 2 && opposite_type == OP_BUY) can_open = false; // 只开空模式，不开多单
-                
-                if(can_open)
-                {
-                    if(OpenOrder(opposite_type, order_price, "Grid Reverse"))
-                    {
-                        g_today_orders++;
-                        Print("[GRID] Reverse Order | Price: ", DoubleToString(order_price, _Digits), " | Direction: ", (opposite_type == OP_BUY ? "BUY" : "SELL"));
-                    }
-                }
-            }
-        }
-    }
+    //--- 反向单逻辑已禁用（纯趋势追踪网格）
+    //--- 上涨开多，下跌开空，不做反向对冲
 }
 
 //+------------------------------------------------------------------+
@@ -435,13 +520,13 @@ bool OpenOrder(int direction, double target_price, string comment_prefix)
     double bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
     double point = _Point;
     
-    //--- 生成订单备注
-    string comment = comment_prefix + " - " + GetDirectionalComment(direction);
+    //--- 使用传入的comment_prefix作为备注
+    string comment = comment_prefix;
     
     //--- 计算SL和TP
     double sl_price, tp_price;
     int sl_points = InpBaseSL;
-    int tp_points = (InpBaseTP <= 0) ? 0 : InpBaseTP;
+    int tp_points = InpBaseTP;
     
     double open_price;
     if(direction == OP_BUY)
@@ -468,12 +553,12 @@ bool OpenOrder(int direction, double target_price, string comment_prefix)
     if(ticket < 0)
     {
         int last_error = GetLastError();
-        Print("[ERROR] Order Failed | Error: ", last_error, " | Direction: ", (direction == OP_BUY ? "BUY" : "SELL"), " | Price: ", DoubleToString(open_price, _Digits));
+        Print("✖ [失败] ", Symbol(), " | ", (direction == OP_BUY ? "多单" : "空单"), " | 错误: ", last_error);
         return false;
     }
     else
     {
-        Print("[SUCCESS] Order Opened | Ticket: ", ticket, " | Price: ", DoubleToString(open_price, _Digits), " | Direction: ", (direction == OP_BUY ? "BUY" : "SELL"), " | Lot: ", lot_size);
+        Print("✓ [成功] #", ticket, " | ", Symbol(), " | ", (direction == OP_BUY ? "多" : "空"), " | ", DoubleToString(open_price, _Digits), " | ", lot_size, "手");
         return true;
     }
 }
@@ -596,50 +681,30 @@ void CreateLabel(const string name, const int x, const int y, const string text,
     if(ObjectFind(0, name) < 0)
     {
         ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
-                ObjectSetInteger(0, name, OBJPROP_CORNER, 0); // 0 = CORNER_UPPER_LEFT
+        ObjectSetInteger(0, name, OBJPROP_CORNER, 0); // 0 = CORNER_UPPER_LEFT
         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
         ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
         ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
         ObjectSetInteger(0, name, OBJPROP_FONTSIZE, font_size);
         ObjectSetString(0, name, OBJPROP_FONT, "Arial");
-        ObjectSetInteger(0, name, OBJPROP_BACK, false);
+        ObjectSetInteger(0, name, OBJPROP_BACK, false);  // 在K线前面
+        ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
     }
     ObjectSetString(0, name, OBJPROP_TEXT, text);
 }
 
 void UpdateDashboard()
 {
-    //--- 统计持仓和盈亏
+    //--- 统计持仓和盈亏（使用统一函数）
     int long_positions = 0;
     int short_positions = 0;
-    int locked_pairs = 0;
-    double total_profit = 0.0;
     double floating_pl = 0.0;
     
-    for(int i = OrdersTotal() - 1; i >= 0; i--)
-    {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-        {
-             if(OrderSymbol() == Symbol())
-             {
-                int magic = OrderMagicNumber();
-                if(magic == InpMagicNo)
-                {
-                    if(OrderType() == OP_BUY)
-                        long_positions++;
-                    else
-                        short_positions++;
-                    
-                    double order_profit = OrderProfit() + OrderSwap() + OrderCommission();
-                    total_profit += order_profit;
-                    floating_pl += order_profit;
-                }
-             }
-        }
-    }
+    GetPositionStats(long_positions, short_positions, floating_pl);
     
     int total_positions = long_positions + short_positions;
-    locked_pairs = MathMin(long_positions, short_positions);
+    int locked_pairs = MathMin(long_positions, short_positions);
     
     // 更新最大持仓记录
     if(total_positions > g_max_positions)
@@ -658,7 +723,7 @@ void UpdateDashboard()
     // 计算浮亏百分比
     double drawdown_percent = (account_equity > 0) ? ((account_balance - account_equity) / account_equity * 100.0) : 0;
 
-    //--- 创建面板背景（加大尺寸）
+    //--- 创建面板背景（现代化设计）
     string bg_name = "YDA_Panel_BG";
     if(ObjectFind(0, bg_name) < 0)
     {
@@ -667,129 +732,149 @@ void UpdateDashboard()
         ObjectSetInteger(0, bg_name, OBJPROP_XDISTANCE, InpPanelX);
         ObjectSetInteger(0, bg_name, OBJPROP_YDISTANCE, InpPanelY);
         ObjectSetInteger(0, bg_name, OBJPROP_XSIZE, 460);
-        ObjectSetInteger(0, bg_name, OBJPROP_YSIZE, 420);
-        ObjectSetInteger(0, bg_name, OBJPROP_BGCOLOR, C'20,20,20');
+        ObjectSetInteger(0, bg_name, OBJPROP_YSIZE, 320);  // 减小面板高度，为按钮留出空间
+        ObjectSetInteger(0, bg_name, OBJPROP_BGCOLOR, C'15,15,25');  // 深蓝黑色
         ObjectSetInteger(0, bg_name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
-        ObjectSetInteger(0, bg_name, OBJPROP_BORDER_COLOR, clrGold);
-        ObjectSetInteger(0, bg_name, OBJPROP_BACK, false);
+        ObjectSetInteger(0, bg_name, OBJPROP_BORDER_COLOR, C'100,180,255');
+        ObjectSetInteger(0, bg_name, OBJPROP_BACK, false);  // 在K线前面
+        ObjectSetInteger(0, bg_name, OBJPROP_HIDDEN, true);
+        ObjectSetInteger(0, bg_name, OBJPROP_SELECTABLE, false);
     }
+    
+    //--- 左侧信息栏已移除（简化界面）
 
-    //--- 显示信息（优化排版）
+
+    //--- 主面板显示信息（优化排版）
     int y_pos = InpPanelY + 10;
-    int x_pos = InpPanelX + 10;
-    int x_pos2 = InpPanelX + 240; // 第二列
-    int line_height = 18;
+    int x_pos = InpPanelX + 15;
+    int x_pos2 = InpPanelX + 245; // 第二列
+    int line_height = 16;
 
-    // 标题
-    string title_text = "═══ Π Grid Engine ═══";
-    if(InpTradingMode == 1) title_text = "═══ Π Random Mode ═══";
-    CreateLabel("YDA_Panel_Title", x_pos, y_pos, title_text, clrGold, 12);
-    y_pos += 25;
+    // 标题（更大更醒目）
+    string title_text = "Π GRID ENGINE";
+    if(InpTradingMode == 1) title_text = "Π RANDOM MODE";
+    CreateLabel("YDA_Panel_Title", x_pos + 100, y_pos, title_text, C'100,180,255', 14);
+    
+    // Live状态指示器（右上角）
+    bool is_trading = IsTradeTime();
+    color live_color = is_trading ? C'0,255,100' : C'255,100,100';
+    string live_status = is_trading ? "● LIVE" : "● PAUSE";
+    CreateLabel("YDA_Panel_LiveStatus", x_pos + 350, y_pos + 2, live_status, live_color, 11);
+    
+    // 服务器时间（小字，与LIVE字母左对齐）
+    string server_time = TimeToString(TimeCurrent(), TIME_MINUTES);
+    CreateLabel("YDA_Panel_ServerTime", x_pos + 365, y_pos + 16, server_time, C'120,120,150', 8);
+    
+    y_pos += 28;
     
     // 分隔线
-    CreateLabel("YDA_Panel_Sep1", x_pos, y_pos, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", C'100,100,100', 8);
-    y_pos += 15;
+    CreateLabel("YDA_Panel_Sep1", x_pos, y_pos, "_________________________________________________________", C'50,50,80', 8);
+    y_pos += 8;
     
     // 第一部分：持仓统计
-    CreateLabel("YDA_Panel_Section1", x_pos, y_pos, "【 持仓统计 】", clrAqua, 11);
-    y_pos += line_height + 3;
-    
-    CreateLabel("YDA_Panel_Long", x_pos, y_pos, "多单: " + (string)long_positions, clrLimeGreen, 10);
-    CreateLabel("YDA_Panel_Short", x_pos2, y_pos, "空单: " + (string)short_positions, clrOrangeRed, 10);
+    CreateLabel("YDA_Panel_Section1", x_pos, y_pos, "■ 持仓统计", C'100,180,255', 10);
     y_pos += line_height;
     
-    CreateLabel("YDA_Panel_Total", x_pos, y_pos, "总持仓: " + (string)total_positions, clrWhite, 10);
-    CreateLabel("YDA_Panel_Locked", x_pos2, y_pos, "锁仓对: " + (string)locked_pairs, clrYellow, 10);
+    CreateLabel("YDA_Panel_LongLabel", x_pos, y_pos, "多单", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Long", x_pos + 50, y_pos, (string)long_positions, C'0,255,100', 10);
+    CreateLabel("YDA_Panel_ShortLabel", x_pos2, y_pos, "空单", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Short", x_pos2 + 50, y_pos, (string)short_positions, C'255,100,100', 10);
     y_pos += line_height;
     
-    CreateLabel("YDA_Panel_MaxPos", x_pos, y_pos, "最大持仓: " + (string)g_max_positions, C'150,150,150', 10);
+    CreateLabel("YDA_Panel_TotalLabel", x_pos, y_pos, "总持仓", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Total", x_pos + 50, y_pos, (string)total_positions, C'200,200,200', 10);
+    CreateLabel("YDA_Panel_LockedLabel", x_pos2, y_pos, "锁仓对", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Locked", x_pos2 + 50, y_pos, (string)locked_pairs, C'255,200,0', 10);
+    y_pos += line_height;
+    
+    CreateLabel("YDA_Panel_MaxPosLabel", x_pos, y_pos, "最大值", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_MaxPos", x_pos + 50, y_pos, (string)g_max_positions, C'120,120,150', 9);
     
     // 交易模式
-    string mode_text = "模式: ";
-    color mode_color = clrWhite;
-    if(g_trade_mode == 0) { mode_text += "双向"; mode_color = clrWhite; }
-    else if(g_trade_mode == 1) { mode_text += "只开多"; mode_color = clrLimeGreen; }
-    else if(g_trade_mode == 2) { mode_text += "只开空"; mode_color = clrOrangeRed; }
-    CreateLabel("YDA_Panel_TradeMode", x_pos2, y_pos, mode_text, mode_color, 10);
-    y_pos += line_height + 8;
+    string mode_text = "";
+    color mode_color = C'200,200,200';
+    if(g_trade_mode == 0) { mode_text = "双向"; mode_color = C'200,200,200'; }
+    else if(g_trade_mode == 1) { mode_text = "只开多"; mode_color = C'0,255,100'; }
+    else if(g_trade_mode == 2) { mode_text = "只开空"; mode_color = C'255,100,100'; }
+    CreateLabel("YDA_Panel_TradeModeLabel", x_pos2, y_pos, "模式", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_TradeMode", x_pos2 + 50, y_pos, mode_text, mode_color, 9);
+    y_pos += line_height + 3;
     
     // 分隔线
-    CreateLabel("YDA_Panel_Sep2", x_pos, y_pos, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", C'100,100,100', 8);
-    y_pos += 15;
+    CreateLabel("YDA_Panel_Sep2", x_pos, y_pos, "_________________________________________________________", C'50,50,80', 8);
+    y_pos += 8;
     
     // 第二部分：账户信息
-    CreateLabel("YDA_Panel_Section2", x_pos, y_pos, "【 账户信息 】", clrAqua, 11);
-    y_pos += line_height + 3;
-    
-    CreateLabel("YDA_Panel_Balance", x_pos, y_pos, "余额: $" + DoubleToString(account_balance, 2), clrWhite, 10);
-    CreateLabel("YDA_Panel_Equity", x_pos2, y_pos, "净值: $" + DoubleToString(account_equity, 2), clrWhite, 10);
+    CreateLabel("YDA_Panel_Section2", x_pos, y_pos, "■ 账户信息", C'100,180,255', 10);
     y_pos += line_height;
     
-    color pl_color = (floating_pl >= 0) ? clrLimeGreen : clrRed;
-    string pl_sign = (floating_pl >= 0) ? "+" : "";
-    CreateLabel("YDA_Panel_FloatPL", x_pos, y_pos, "浮动: " + pl_sign + "$" + DoubleToString(floating_pl, 2), pl_color, 10);
+    CreateLabel("YDA_Panel_BalanceLabel", x_pos, y_pos, "余额", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Balance", x_pos + 50, y_pos, "$" + DoubleToString(account_balance, 2), C'200,200,200', 10);
+    CreateLabel("YDA_Panel_EquityLabel", x_pos2, y_pos, "净值", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Equity", x_pos2 + 50, y_pos, "$" + DoubleToString(account_equity, 2), C'200,200,200', 10);
+    y_pos += line_height;
     
-    double margin_percent = (margin_free > 0) ? (margin_used / (margin_used + margin_free) * 100.0) : 0;
-    color margin_color = (margin_percent > 80) ? clrRed : (margin_percent > 60) ? clrYellow : clrLimeGreen;
-    CreateLabel("YDA_Panel_Margin", x_pos2, y_pos, "保证金: " + DoubleToString(margin_percent, 1) + "%", margin_color, 10);
-    y_pos += line_height + 8;
+    color pl_color = (floating_pl >= 0) ? C'0,255,100' : C'255,100,100';
+    string pl_sign = (floating_pl >= 0) ? "+" : "";
+    CreateLabel("YDA_Panel_FloatPLLabel", x_pos, y_pos, "浮动", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_FloatPL", x_pos + 50, y_pos, pl_sign + "$" + DoubleToString(floating_pl, 2), pl_color, 10);
+    
+    double margin_percent_display = (margin_free > 0) ? (margin_used / (margin_used + margin_free) * 100.0) : 0;
+    color margin_color = (margin_percent_display > 80) ? C'255,100,100' : (margin_percent_display > 60) ? C'255,200,0' : C'0,255,100';
+    CreateLabel("YDA_Panel_MarginLabel", x_pos2, y_pos, "保证金", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Margin", x_pos2 + 50, y_pos, DoubleToString(margin_percent_display, 1) + "%", margin_color, 10);
+    y_pos += line_height + 3;
     
     // 分隔线
-    CreateLabel("YDA_Panel_Sep3", x_pos, y_pos, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", C'100,100,100', 8);
-    y_pos += 15;
+    CreateLabel("YDA_Panel_Sep3", x_pos, y_pos, "_________________________________________________________", C'50,50,80', 8);
+    y_pos += 8;
     
     // 第三部分：今日统计
-    CreateLabel("YDA_Panel_Section3", x_pos, y_pos, "【 今日统计 】", clrAqua, 11);
-    y_pos += line_height + 3;
-    
-    CreateLabel("YDA_Panel_TodayOrders", x_pos, y_pos, "开单数: " + (string)g_today_orders, clrWhite, 10);
-    
-    color today_pl_color = (g_today_profit >= 0) ? clrLimeGreen : clrRed;
-    string today_pl_sign = (g_today_profit >= 0) ? "+" : "";
-    CreateLabel("YDA_Panel_TodayPL", x_pos2, y_pos, "盈亏: " + today_pl_sign + "$" + DoubleToString(g_today_profit, 2), today_pl_color, 10);
+    CreateLabel("YDA_Panel_Section3", x_pos, y_pos, "■ 今日统计", C'100,180,255', 10);
     y_pos += line_height;
     
-    string server_time = TimeToString(TimeCurrent(), TIME_SECONDS);
-    CreateLabel("YDA_Panel_Time", x_pos, y_pos, "时间: " + server_time, C'150,150,150', 9);
-    y_pos += line_height + 8;
+    CreateLabel("YDA_Panel_TodayOrdersLabel", x_pos, y_pos, "开单数", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_TodayOrders", x_pos + 50, y_pos, (string)g_today_orders, C'200,200,200', 10);
     
-    // 分隔线
-    CreateLabel("YDA_Panel_Sep4", x_pos, y_pos, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", C'100,100,100', 8);
-    y_pos += 15;
+    color today_pl_color = (g_today_profit >= 0) ? C'0,255,100' : C'255,100,100';
+    string today_pl_sign = (g_today_profit >= 0) ? "+" : "";
+    CreateLabel("YDA_Panel_TodayPLLabel", x_pos2, y_pos, "盈亏", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_TodayPL", x_pos2 + 50, y_pos, today_pl_sign + "$" + DoubleToString(g_today_profit, 2), today_pl_color, 10);
+    y_pos += line_height;
     
-    // 状态栏
-    color status_color = clrLimeGreen;
-    string status_text = "● 运行中";
-    if(!IsTradeTime())
-    {
-        status_color = clrYellow;
-        status_text = "● 非交易时段";
-    }
-    CreateLabel("YDA_Panel_Status", x_pos, y_pos, status_text, status_color, 10);
+    // 日亏损限制已移除
     
-    // 警报指示
+    // 警报指示（如果有警报，显示在第二列）
     string alert_text = "";
-    color alert_color = clrWhite;
+    color alert_color = C'200,200,200';
     if(total_positions >= InpMaxOrdersAlert)
     {
-        alert_text = "⚠ 持仓数警报";
-        alert_color = clrRed;
+        alert_text = "⚠ 持仓警报";
+        alert_color = C'255,100,100';
     }
-    else if(margin_percent >= InpMarginAlert)
+    else if(margin_percent_display >= InpMarginAlert)
     {
-        alert_text = "⚠ 保证金警报";
-        alert_color = clrOrange;
+        alert_text = "⚠ 保证金";
+        alert_color = C'255,150,0';
     }
     else if(drawdown_percent >= InpDrawdownAlert)
     {
-        alert_text = "⚠ 回撤警报";
-        alert_color = clrOrange;
+        alert_text = "⚠ 回撤";
+        alert_color = C'255,150,0';
     }
     
     if(alert_text != "")
+    {
         CreateLabel("YDA_Panel_Alert", x_pos2, y_pos, alert_text, alert_color, 10);
+        y_pos += line_height;
+    }
     else
-        CreateLabel("YDA_Panel_Alert", x_pos2, y_pos, "", clrWhite, 10);
+    {
+        CreateLabel("YDA_Panel_Alert", x_pos2, y_pos, "", C'200,200,200', 10);
+    }
+    
+    //--- 检查并重新创建按钮（如果丢失）
+    EnsureButtonsExist();
     
     //--- 更新按钮状态
     UpdateButtonStates();
@@ -811,27 +896,27 @@ void UpdateOrdersOnParameterChange()
                 if(magic == InpMagicNo)
                 {
                     // 根据当前参数重新计算SL和TP
-                    double new_sl_price, new_tp_price;
+                    double new_sl_price = 0;
+                    double new_tp_price = 0;
                     int sl_points = InpBaseSL;
-                    // 当基础TP为0时，表示不设置止盈
-                    bool no_takeprofit = (InpBaseTP <= 0);
-                    int tp_points = no_takeprofit ? 0 : InpBaseTP;
+                    int tp_points = InpBaseTP;
                     double point = _Point;
 
+                    // 只有当参数 > 0 时才计算 SL/TP
                     if(OrderType() == OP_BUY)
                     {
-                        new_sl_price = OrderOpenPrice() - sl_points * point;
-                        new_tp_price = no_takeprofit ? 0 : (OrderOpenPrice() + tp_points * point);
+                        if(sl_points > 0)
+                            new_sl_price = NormalizeDouble(OrderOpenPrice() - sl_points * point, _Digits);
+                        if(tp_points > 0)
+                            new_tp_price = NormalizeDouble(OrderOpenPrice() + tp_points * point, _Digits);
                     }
                     else // OP_SELL
                     {
-                        new_sl_price = OrderOpenPrice() + sl_points * point;
-                        new_tp_price = no_takeprofit ? 0 : (OrderOpenPrice() - tp_points * point);
+                        if(sl_points > 0)
+                            new_sl_price = NormalizeDouble(OrderOpenPrice() + sl_points * point, _Digits);
+                        if(tp_points > 0)
+                            new_tp_price = NormalizeDouble(OrderOpenPrice() - tp_points * point, _Digits);
                     }
-
-                    // 标准化价格
-                    new_sl_price = NormalizeDouble(new_sl_price, _Digits);
-                    if(new_tp_price != 0) new_tp_price = NormalizeDouble(new_tp_price, _Digits);
 
                     // 检查SL/TP是否需要更新
                     // 重要: 如果保本损已触发，则不再调整止损
@@ -842,20 +927,44 @@ void UpdateOrdersOnParameterChange()
                         if (OrderType() == OP_SELL && OrderStopLoss() <= OrderOpenPrice() && OrderStopLoss() != 0) isBreakevenTriggered = true;
                     }
 
+                    // 确定最终的 SL/TP
                     double target_sl = isBreakevenTriggered ? OrderStopLoss() : new_sl_price;
-                    double target_tp = new_tp_price; // 允许为0，表示不设TP
+                    double target_tp = new_tp_price;
 
-                    if(MathAbs(OrderStopLoss() - target_sl) > point / 2.0 || MathAbs(OrderTakeProfit() - target_tp) > point / 2.0)
+                    // 检查是否真的需要修改
+                    // 如果参数都是 0，且订单已经没有 SL/TP，则不需要修改
+                    bool need_update = false;
+                    
+                    // 检查 SL 是否需要更新
+                    if(sl_points > 0 || OrderStopLoss() != 0)
                     {
-                        if(!OrderModify(OrderTicket(), OrderOpenPrice(), target_sl, target_tp, 0, clrNONE))
+                        if(MathAbs(OrderStopLoss() - target_sl) > point)
+                            need_update = true;
+                    }
+                    
+                    // 检查 TP 是否需要更新
+                    if(tp_points > 0 || OrderTakeProfit() != 0)
+                    {
+                        if(MathAbs(OrderTakeProfit() - target_tp) > point)
+                            need_update = true;
+                    }
+                    
+                    if(need_update)
+                    {
+                        ResetLastError(); // 清除之前的错误
+                        bool result = OrderModify(OrderTicket(), OrderOpenPrice(), target_sl, target_tp, 0, clrNONE);
+                        int error = GetLastError();
+                        
+                        if(!result)
                         {
-                            // 忽略"no changes"错误
-                            if(GetLastError() != 1) 
-                                Print("[ERROR] Parameter Update Failed | Ticket: ", OrderTicket(), " | Error: ", GetLastError());
-                        }
-                        else
-                        {
-                            Print("[UPDATE] Parameter Updated | Ticket: ", OrderTicket(), " | New SL: ", DoubleToString(target_sl, _Digits), " | New TP: ", DoubleToString(target_tp, _Digits));
+                            // 只记录真正的错误，忽略"no changes"和"no error"
+                            if(error != 0 && error != 1) 
+                            {
+                                Print("[ERROR] Parameter Update Failed | Ticket: ", OrderTicket(), 
+                                      " | Error: ", error, 
+                                      " | Old SL: ", DoubleToString(OrderStopLoss(), _Digits),
+                                      " | New SL: ", DoubleToString(target_sl, _Digits));
+                            }
                         }
                     }
                 }
@@ -869,20 +978,51 @@ void UpdateOrdersOnParameterChange()
 //+------------------------------------------------------------------+
 void CreateButton(string name, int x, int y, int width, int height, string text, color txt_color, color bg_color)
 {
-    if(ObjectFind(0, name) < 0)
+    // 删除旧按钮（如果存在）
+    if(ObjectFind(0, name) >= 0)
+        ObjectDelete(0, name);
+    
+    // 创建新按钮
+    ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
+    ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+    ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+    ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+    ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 10);
+    ObjectSetInteger(0, name, OBJPROP_COLOR, txt_color);
+    ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg_color);
+    ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrWhite);
+    ObjectSetString(0, name, OBJPROP_TEXT, text);
+    ObjectSetInteger(0, name, OBJPROP_BACK, false);  // 按钮在最前面
+    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+    ObjectSetInteger(0, name, OBJPROP_SELECTED, false);
+    ObjectSetInteger(0, name, OBJPROP_STATE, false);  // 确保按钮初始状态为未按下
+    ObjectSetInteger(0, name, OBJPROP_HIDDEN, false); // 按钮需要可见，不隐藏
+    ObjectSetInteger(0, name, OBJPROP_ZORDER, 1);     // 设置较高的层级，确保在最前面
+}
+
+//+------------------------------------------------------------------+
+//| 确保按钮存在（如果丢失则重新创建）                                |
+//+------------------------------------------------------------------+
+void EnsureButtonsExist()
+{
+    if(!InpShowPanel) return;
+    
+    // 检查并重新创建操作按钮
+    if(ObjectFind(0, "YDA_Btn_CloseAll") < 0)
     {
-        ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
-        ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
-        ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
-        ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
-        ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
-        ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-        ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 10);
-        ObjectSetInteger(0, name, OBJPROP_COLOR, txt_color);
-        ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg_color);
-        ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrWhite);
-        ObjectSetString(0, name, OBJPROP_TEXT, text);
-        ObjectSetInteger(0, name, OBJPROP_BACK, false);
+        CreateButton("YDA_Btn_CloseAll", InpPanelX + 10, InpPanelY + 330, 140, 28, "一键平仓", clrWhite, C'180,50,50');
+    }
+    
+    if(ObjectFind(0, "YDA_Btn_BuyOnly") < 0)
+    {
+        CreateButton("YDA_Btn_BuyOnly", InpPanelX + 160, InpPanelY + 330, 140, 28, "只开多", clrWhite, C'60,60,80');
+    }
+    
+    if(ObjectFind(0, "YDA_Btn_SellOnly") < 0)
+    {
+        CreateButton("YDA_Btn_SellOnly", InpPanelX + 310, InpPanelY + 330, 140, 28, "只开空", clrWhite, C'60,60,80');
     }
 }
 
@@ -896,14 +1036,21 @@ void UpdateButtonStates()
     {
         if(g_trade_mode == 1)
         {
-            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_BGCOLOR, clrDarkGreen);
-            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_STATE, true);
+            // 激活状态：绿色背景 + 亮边框 + 加粗文字效果
+            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_BGCOLOR, C'0,180,80');
+            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_BORDER_COLOR, C'0,255,120');
+            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_COLOR, clrWhite);
+            // 不使用STATE属性来表示激活，避免按钮卡住
         }
         else
         {
-            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_BGCOLOR, clrGreen);
-            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_STATE, false);
+            // 未激活：灰色背景 + 白边框
+            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_BGCOLOR, C'60,60,80');
+            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_BORDER_COLOR, clrWhite);
+            ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_COLOR, clrWhite);
         }
+        // 始终确保按钮状态为未按下
+        ObjectSetInteger(0, "YDA_Btn_BuyOnly", OBJPROP_STATE, false);
     }
     
     // 更新"只开空"按钮状态
@@ -911,50 +1058,117 @@ void UpdateButtonStates()
     {
         if(g_trade_mode == 2)
         {
-            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_BGCOLOR, clrDarkRed);
-            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_STATE, true);
+            // 激活状态：红色背景 + 亮边框 + 加粗文字效果
+            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_BGCOLOR, C'200,60,60');
+            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_BORDER_COLOR, C'255,100,100');
+            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_COLOR, clrWhite);
+            // 不使用STATE属性来表示激活，避免按钮卡住
         }
         else
         {
-            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_BGCOLOR, clrOrangeRed);
-            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_STATE, false);
+            // 未激活：灰色背景 + 白边框
+            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_BGCOLOR, C'60,60,80');
+            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_BORDER_COLOR, clrWhite);
+            ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_COLOR, clrWhite);
         }
+        // 始终确保按钮状态为未按下
+        ObjectSetInteger(0, "YDA_Btn_SellOnly", OBJPROP_STATE, false);
     }
 }
 
 //+------------------------------------------------------------------+
-//| 一键平仓                                                          |
+//| 一键平仓（支持多品种）                                            |
 //+------------------------------------------------------------------+
 void CloseAllPositions()
 {
     int magic_number = InpMagicNo;
     int closed_count = 0;
+    int failed_count = 0;
+    int skipped_count = 0;
+    
+    Print("\n═════════ 一键平仓开始 ═════════");
     
     for(int i = OrdersTotal() - 1; i >= 0; i--)
     {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+            continue;
+            
+        if(OrderMagicNumber() != magic_number)
+            continue;
+            
+        string order_symbol = OrderSymbol();
+        int ticket = OrderTicket();
+        int order_type = OrderType();
+        
+        // 减少日志：找到订单不输出
+        
+        // 一键平仓：平掉所有订单，不检查是否启用
         {
-            if(OrderSymbol() == Symbol() && OrderMagicNumber() == magic_number)
+            // 刷新报价
+            RefreshRates();
+            
+            // 获取平仓价格（增加容错）
+            double close_price = 0;
+            if(OrderType() == OP_BUY)
             {
-                double close_price = (OrderType() == OP_BUY) ? SymbolInfoDouble(Symbol(), SYMBOL_BID) : SymbolInfoDouble(Symbol(), SYMBOL_ASK);
-                if(OrderClose(OrderTicket(), OrderLots(), close_price, 3, clrNONE))
+                close_price = MarketInfo(order_symbol, MODE_BID);
+                if(close_price == 0) close_price = SymbolInfoDouble(order_symbol, SYMBOL_BID);
+            }
+            else // OP_SELL
+            {
+                close_price = MarketInfo(order_symbol, MODE_ASK);
+                if(close_price == 0) close_price = SymbolInfoDouble(order_symbol, SYMBOL_ASK);
+            }
+            
+            // 检查价格有效性
+            if(close_price == 0)
+            {
+                Print("[ERROR] Invalid price for ", order_symbol, " | Ticket: ", ticket);
+                failed_count++;
+                continue;
+            }
+            
+            // 尝试平仓（增加滑点，重试3次）
+            bool closed = false;
+            for(int retry = 0; retry < 3 && !closed; retry++)
+            {
+                if(retry > 0)
                 {
+                    Sleep(100);
+                    RefreshRates();
+                    // 重新获取价格
+                    if(OrderType() == OP_BUY)
+                        close_price = MarketInfo(order_symbol, MODE_BID);
+                    else
+                        close_price = MarketInfo(order_symbol, MODE_ASK);
+                }
+                
+                if(OrderClose(ticket, OrderLots(), close_price, 10, clrNONE))
+                {
+                    closed = true;
                     closed_count++;
+                    Print("✓ 平仓 #", ticket, " | ", order_symbol, " | ", (OrderType() == OP_BUY ? "多" : "空"));
                 }
                 else
                 {
-                    Print("[ERROR] Close Failed | Ticket: ", OrderTicket(), " | Error: ", GetLastError());
+                    int error = GetLastError();
+                    if(retry == 2)
+                    {
+                        Print("✖ 平仓失败 #", ticket, " | ", order_symbol, " | 错误: ", error);
+                        failed_count++;
+                    }
                 }
             }
         }
     }
     
-    Print("[CLOSE] All Positions Closed | Count: ", closed_count);
+    Print("═════════ 平仓完成 ═════════\n成功: ", closed_count, " | 失败: ", failed_count, "\n");
     
     // 重置第一个订单记录
     g_first_order_price = 0.0;
     g_first_order_type = -1;
 }
+
 
 //+------------------------------------------------------------------+
 //| 切换只开多模式                                                    |
@@ -1029,22 +1243,13 @@ void CheckAlerts()
     if(current_time - last_alert_time < 60)
         return;
     
-    int magic_number = InpMagicNo;
-    int total_positions = 0;
+    // 统计持仓（使用统一函数）
+    int long_positions = 0;
+    int short_positions = 0;
     double total_profit = 0.0;
     
-    // 统计持仓
-    for(int i = 0; i < OrdersTotal(); i++)
-    {
-        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-        {
-            if(OrderSymbol() == Symbol() && OrderMagicNumber() == magic_number)
-            {
-                total_positions++;
-                total_profit += OrderProfit() + OrderSwap() + OrderCommission();
-            }
-        }
-    }
+    GetPositionStats(long_positions, short_positions, total_profit);
+    int total_positions = long_positions + short_positions;
     
     // 获取账户信息
     double account_equity = AccountEquity();
@@ -1089,5 +1294,407 @@ void CheckAlerts()
         Alert(alert_message);
         last_alert_time = current_time;
     }
+}
+
+//+------------------------------------------------------------------+
+//| 加载可用品种列表                                                  |
+//+------------------------------------------------------------------+
+void LoadAvailableSymbols()
+{
+    int total = SymbolsTotal(true); // 只获取市场报价窗口中的品种
+    ArrayResize(g_available_symbols, total);
+    ArrayResize(g_symbol_enabled, total);
+    ArrayResize(g_symbol_first_order_opened, total);
+    
+    int count = 0;
+    for(int i = 0; i < total; i++)
+    {
+        string symbol = SymbolName(i, true);
+        if(symbol != "")
+        {
+            g_available_symbols[count] = symbol;
+            // 默认只启用当前图表品种
+            g_symbol_enabled[count] = (symbol == Symbol());
+            g_symbol_first_order_opened[count] = false; // 初始化为未开首单
+            count++;
+        }
+    }
+    
+    ArrayResize(g_available_symbols, count);
+    ArrayResize(g_symbol_enabled, count);
+    ArrayResize(g_symbol_first_order_opened, count);
+    
+    // 尝试恢复之前保存的状态
+    RestoreSymbolStates();
+    
+    Print("[INIT] Loaded ", count, " symbols, Current: ", Symbol());
+}
+
+//+------------------------------------------------------------------+
+//| 显示品种选择器（横向网格布局）                                    |
+//+------------------------------------------------------------------+
+void DisplaySymbolSelector(int panel_x, int panel_y)
+{
+    // 创建品种选择器背景（超宽显示）
+    string selector_bg = "YDA_SymbolSelector_BG";
+    if(ObjectFind(0, selector_bg) < 0)
+    {
+        ObjectCreate(0, selector_bg, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+        ObjectSetInteger(0, selector_bg, OBJPROP_CORNER, 0);
+        ObjectSetInteger(0, selector_bg, OBJPROP_XDISTANCE, panel_x + 470);
+        ObjectSetInteger(0, selector_bg, OBJPROP_YDISTANCE, panel_y);
+        ObjectSetInteger(0, selector_bg, OBJPROP_XSIZE, 850);  // 超宽显示
+        ObjectSetInteger(0, selector_bg, OBJPROP_YSIZE, 350);
+        ObjectSetInteger(0, selector_bg, OBJPROP_BGCOLOR, C'10,10,20');
+        ObjectSetInteger(0, selector_bg, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+        ObjectSetInteger(0, selector_bg, OBJPROP_BORDER_COLOR, C'100,180,255');
+        ObjectSetInteger(0, selector_bg, OBJPROP_BACK, false);  // 在K线前面
+        ObjectSetInteger(0, selector_bg, OBJPROP_HIDDEN, true);
+        ObjectSetInteger(0, selector_bg, OBJPROP_SELECTABLE, false);
+    }
+    
+    // 显示标题和说明
+    CreateLabel("YDA_SymbolSelector_Title", panel_x + 820, panel_y + 10, "多品种交易", C'100,180,255', 11);
+    
+    // 统计启用的品种数
+    int enabled_count = 0;
+    for(int j = 0; j < ArraySize(g_symbol_enabled); j++)
+    {
+        if(g_symbol_enabled[j]) enabled_count++;
+    }
+    CreateLabel("YDA_SymbolSelector_Count", panel_x + 815, panel_y + 28, 
+        "已启用: " + (string)enabled_count, C'0,255,100', 9);
+    
+    // 分隔线
+    CreateLabel("YDA_SymbolSelector_Sep", panel_x + 480, panel_y + 46, 
+        "__________________________________________________________________", C'50,50,80', 8);
+    
+    // 显示品种网格（10列超宽布局）
+    int total_symbols = ArraySize(g_available_symbols);
+    int start_idx = 0;  // 显示所有品种，不分页
+    int end_idx = total_symbols;
+    
+    int btn_width = 80;
+    int btn_height = 24;
+    int btn_spacing_x = 3;
+    int btn_spacing_y = 2;
+    int start_x = panel_x + 480;
+    int start_y = panel_y + 56;
+    
+    int display_count = 0;
+    int cols_per_row = 10; // 每行10列超宽布局
+    
+    for(int i = start_idx; i < end_idx; i++)
+    {
+        string symbol = g_available_symbols[i];
+        string btn_name = "YDA_Btn_Symbol_" + (string)i;
+        
+        // 计算网格位置（10列布局）
+        int row = display_count / cols_per_row;
+        int col = display_count % cols_per_row;
+        int x_pos = start_x + col * (btn_width + btn_spacing_x);
+        int y_pos = start_y + row * (btn_height + btn_spacing_y);
+        
+        // 根据启用状态设置颜色（优化配色）
+        bool is_enabled = g_symbol_enabled[i];
+        bool is_current = (symbol == Symbol());
+        
+        color bg_color;
+        color txt_color;
+        color border_color;
+        
+        if(is_current && is_enabled)
+        {
+            // 当前品种且启用：鲜明蓝色+亮金色
+            bg_color = C'70,110,180';      // 钴蓝色
+            txt_color = C'255,223,0';       // 亮金色
+            border_color = C'135,206,250';  // 天蓝色边框
+        }
+        else if(is_enabled)
+        {
+            // 已启用：专业绿色+白色文字
+            bg_color = C'34,139,34';        // 森林绿
+            txt_color = C'255,255,255';     // 纯白色
+            border_color = C'50,205,50';    // 亮绿边框
+        }
+        else
+        {
+            // 未启用：中性灰+淡文字
+            bg_color = C'47,79,79';         // 深石板灰
+            txt_color = C'169,169,169';     // 暗灰色
+            border_color = C'105,105,105';  // 暗灰边框
+        }
+        
+        if(ObjectFind(0, btn_name) < 0)
+        {
+            ObjectCreate(0, btn_name, OBJ_BUTTON, 0, 0, 0);
+            ObjectSetInteger(0, btn_name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        }
+        
+        ObjectSetInteger(0, btn_name, OBJPROP_XDISTANCE, x_pos);
+        ObjectSetInteger(0, btn_name, OBJPROP_YDISTANCE, y_pos);
+        ObjectSetInteger(0, btn_name, OBJPROP_XSIZE, btn_width);
+        ObjectSetInteger(0, btn_name, OBJPROP_YSIZE, btn_height);
+        ObjectSetInteger(0, btn_name, OBJPROP_FONTSIZE, 8);
+        ObjectSetInteger(0, btn_name, OBJPROP_COLOR, txt_color);
+        ObjectSetInteger(0, btn_name, OBJPROP_BGCOLOR, bg_color);
+        ObjectSetInteger(0, btn_name, OBJPROP_BORDER_COLOR, border_color);
+        ObjectSetString(0, btn_name, OBJPROP_TEXT, symbol);
+        ObjectSetInteger(0, btn_name, OBJPROP_BACK, false);
+        ObjectSetInteger(0, btn_name, OBJPROP_STATE, false);
+        
+        display_count++;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 切换品种启用/禁用状态并立即开单                                   |
+//+------------------------------------------------------------------+
+void ToggleSymbol(int symbol_index)
+{
+    if(symbol_index < 0 || symbol_index >= ArraySize(g_available_symbols))
+        return;
+    
+    string symbol = g_available_symbols[symbol_index];
+    bool was_enabled = g_symbol_enabled[symbol_index];
+    
+    // 切换状态
+    g_symbol_enabled[symbol_index] = !was_enabled;
+    
+    if(g_symbol_enabled[symbol_index])
+    {
+        Print("[MULTI-SYMBOL] Enabled: ", symbol);
+        
+        // 只有未开过首单才开单
+        if(!g_symbol_first_order_opened[symbol_index])
+        {
+            OpenOrderForSymbol(symbol, symbol_index);
+        }
+    }
+    else
+    {
+        Print("[MULTI-SYMBOL] Disabled: ", symbol);
+        // 关闭该品种的所有持仓
+        CloseSymbolPositions(symbol);
+        // 重置首单标记，下次启用时可以重新开单
+        g_symbol_first_order_opened[symbol_index] = false;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 为指定品种开单                                                    |
+//+------------------------------------------------------------------+
+void OpenOrderForSymbol(string symbol, int symbol_index)
+{
+    // 获取品种的价格信息
+    double ask = MarketInfo(symbol, MODE_ASK);
+    double bid = MarketInfo(symbol, MODE_BID);
+    double point = MarketInfo(symbol, MODE_POINT);
+    int digits = (int)MarketInfo(symbol, MODE_DIGITS);
+    
+    if(ask == 0 || bid == 0)
+    {
+        Print("[ERROR] Cannot get price for ", symbol);
+        return;
+    }
+    
+    // 根据交易模式确定方向
+    int direction;
+    if(g_trade_mode == 1) // 只开多
+        direction = OP_BUY;
+    else if(g_trade_mode == 2) // 只开空
+        direction = OP_SELL;
+    else // 双向模式，随机选择
+        direction = (MathRand() % 2 == 0) ? OP_BUY : OP_SELL;
+    
+    // 计算SL和TP
+    double sl_price = 0;
+    double tp_price = 0;
+    double open_price;
+    
+    if(direction == OP_BUY)
+    {
+        open_price = ask;
+        if(InpBaseSL > 0)
+            sl_price = NormalizeDouble(ask - InpBaseSL * point, digits);
+        if(InpBaseTP > 0)
+            tp_price = NormalizeDouble(ask + InpBaseTP * point, digits);
+    }
+    else // OP_SELL
+    {
+        open_price = bid;
+        if(InpBaseSL > 0)
+            sl_price = NormalizeDouble(bid + InpBaseSL * point, digits);
+        if(InpBaseTP > 0)
+            tp_price = NormalizeDouble(bid - InpBaseTP * point, digits);
+    }
+    
+    // 生成订单备注
+    string comment = GenerateOrderComment("Multi", symbol, 1);
+    
+    // 开单
+    int ticket = OrderSend(symbol, direction, InpLotSize, open_price, 3, sl_price, tp_price, 
+                          comment, InpMagicNo, 0, clrNONE);
+    
+    if(ticket > 0)
+    {
+        g_today_orders++;
+        g_symbol_first_order_opened[symbol_index] = true; // 标记已开首单
+        Print("[MULTI-SYMBOL] Order Opened | Symbol: ", symbol, 
+              " | Ticket: ", ticket, 
+              " | Direction: ", (direction == OP_BUY ? "BUY" : "SELL"), 
+              " | Price: ", DoubleToString(open_price, digits));
+    }
+    else
+    {
+        int error = GetLastError();
+        Print("[ERROR] Order Failed | Symbol: ", symbol, 
+              " | Error: ", error, 
+              " | Direction: ", (direction == OP_BUY ? "BUY" : "SELL"));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 关闭指定品种的所有持仓                                            |
+//+------------------------------------------------------------------+
+void CloseSymbolPositions(string symbol)
+{
+    int magic_number = InpMagicNo;
+    int closed_count = 0;
+    
+    for(int i = OrdersTotal() - 1; i >= 0; i--)
+    {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        {
+            if(OrderSymbol() == symbol && OrderMagicNumber() == magic_number)
+            {
+                double close_price = (OrderType() == OP_BUY) ? 
+                    MarketInfo(symbol, MODE_BID) : 
+                    MarketInfo(symbol, MODE_ASK);
+                    
+                if(OrderClose(OrderTicket(), OrderLots(), close_price, 3, clrNONE))
+                {
+                    closed_count++;
+                }
+            }
+        }
+    }
+    
+    if(closed_count > 0)
+        Print("[CLOSE] Closed ", closed_count, " positions for ", symbol);
+}
+
+//+------------------------------------------------------------------+
+//| 保存品种启用状态到全局变量                                        |
+//+------------------------------------------------------------------+
+void SaveSymbolStates()
+{
+    // 清除旧的全局变量
+    GlobalVariablesDeleteAll("PiGrid_Symbol_");
+    
+    // 保存每个品种的启用状态
+    for(int i = 0; i < ArraySize(g_available_symbols); i++)
+    {
+        if(g_symbol_enabled[i])
+        {
+            string var_name = "PiGrid_Symbol_" + g_available_symbols[i];
+            GlobalVariableSet(var_name, 1.0);
+        }
+    }
+    
+    Print("[SAVE] Saved ", ArraySize(g_available_symbols), " symbol states");
+}
+
+//+------------------------------------------------------------------+
+//| 恢复品种启用状态                                                  |
+//+------------------------------------------------------------------+
+void RestoreSymbolStates()
+{
+    int restored_count = 0;
+    
+    // 遍历所有品种，检查是否有保存的状态
+    for(int i = 0; i < ArraySize(g_available_symbols); i++)
+    {
+        string var_name = "PiGrid_Symbol_" + g_available_symbols[i];
+        
+        // 如果存在全局变量，说明之前启用过
+        if(GlobalVariableCheck(var_name))
+        {
+            g_symbol_enabled[i] = true;
+            restored_count++;
+        }
+    }
+    
+    if(restored_count > 0)
+        Print("[RESTORE] Restored ", restored_count, " enabled symbols");
+}
+
+// 平亏损/平盈利功能已移除，简化为只保留一键平仓
+
+//+------------------------------------------------------------------+
+//| 检查日最大亏损限制                                                |
+//+------------------------------------------------------------------+
+bool CheckDailyLossLimit()
+{
+    if(!InpEnableDailyLossLimit)
+        return true;
+        
+    // 计算今日亏损
+    if(g_today_profit <= -InpMaxDailyLoss)
+    {
+        Print("⛔ 日亏损限制触发 | 今日亏损: $", DoubleToString(g_today_profit, 2), " | 限制: $-", DoubleToString(InpMaxDailyLoss, 2));
+        return false;
+    }
+    
+    return true;
+}
+
+// Telegram通知功能已简化移除
+
+//+------------------------------------------------------------------+
+//| 更新品种按钮颜色（即时反馈）                                      |
+//+------------------------------------------------------------------+
+void UpdateSymbolButtonColor(int symbol_index, bool will_enable)
+{
+    if(symbol_index < 0 || symbol_index >= ArraySize(g_available_symbols))
+        return;
+    
+    string symbol = g_available_symbols[symbol_index];
+    string btn_name = "YDA_Btn_Symbol_" + (string)symbol_index;
+    
+    if(ObjectFind(0, btn_name) < 0)
+        return;
+    
+    bool is_current = (symbol == Symbol());
+    color bg_color;
+    color txt_color;
+    color border_color;
+    
+    if(is_current && will_enable)
+    {
+        // 当前品种且启用：鲜明蓝色+亮金色
+        bg_color = C'70,110,180';      // 钴蓝色
+        txt_color = C'255,223,0';       // 亮金色
+        border_color = C'135,206,250';  // 天蓝色边框
+    }
+    else if(will_enable)
+    {
+        // 已启用：专业绿色+白色文字
+        bg_color = C'34,139,34';        // 森林绿
+        txt_color = C'255,255,255';     // 纯白色
+        border_color = C'50,205,50';    // 亮绿边框
+    }
+    else
+    {
+        // 未启用：中性灰+淡文字
+        bg_color = C'47,79,79';         // 深石板灰
+        txt_color = C'169,169,169';     // 暗灰色
+        border_color = C'105,105,105';  // 暗灰边框
+    }
+    
+    // 立即更新按钮颜色
+    ObjectSetInteger(0, btn_name, OBJPROP_COLOR, txt_color);
+    ObjectSetInteger(0, btn_name, OBJPROP_BGCOLOR, bg_color);
+    ObjectSetInteger(0, btn_name, OBJPROP_BORDER_COLOR, border_color);
 }
 //+------------------------------------------------------------------+
