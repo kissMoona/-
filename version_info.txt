@@ -1,0 +1,32 @@
+Π Grid Engine - Version Information
+=====================================
+
+Current Version: 1.30
+Release Date: 2025-10-02
+Build Type: Multi-Symbol Trading System
+
+Version History:
+- v1.30 (2025-10-02): Multi-Symbol Trading Support
+- v1.25 (2025-10-01): Enhanced UI and Server Information
+- v1.21 (2025-10-01): Button Display Fixes
+- v1.20 (2025-10-01): Initial Release
+
+Key Features in v1.30:
+✓ Multi-symbol grid trading
+✓ Multi-symbol random trading  
+✓ Independent grid management per symbol
+✓ Enhanced symbol selector interface
+✓ Improved error handling and logging
+✓ Backward compatibility maintained
+
+Files Updated in v1.30:
+- Pi_Grid_Engine.mq4 (Main EA file)
+- CHANGELOG.md (Version history)
+- RELEASE_v1.30.md (Release notes)
+- version_info.txt (This file)
+
+Next Planned Version: v1.40
+- Advanced risk management
+- Performance analytics
+- Trade history export
+- Multi-timeframe support

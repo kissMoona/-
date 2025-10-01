@@ -2,6 +2,50 @@
 
 All notable changes to Π Grid Engine will be documented in this file.
 
+## [1.30] - 2025-10-02
+
+### 🚀 Major Feature: Multi-Symbol Trading Support
+
+#### Added
+
+- **Multi-Symbol Grid Trading**: `ManageLogic_Grid_MultiSymbol()` function that processes all enabled symbols simultaneously
+- **Multi-Symbol Random Trading**: `ManageLogic_Random_MultiSymbol()` function that randomly selects from enabled symbols
+- **Symbol-Specific Functions**:
+  - `ManageLogic_Grid_ForSymbol()` - Individual symbol grid logic
+  - `OpenOrderForSymbol_Grid()` - Grid order placement for specific symbols
+  - `OpenOrderForSymbol_Random()` - Random order placement for specific symbols
+  - `CheckAndOpenGridOrders_ForSymbol()` - Symbol-specific grid level checking
+  - `HasOrderAtPrice_ForSymbol()` - Symbol-specific price level validation
+
+#### Fixed
+
+- **Critical Bug**: Multi-symbol trading now works correctly - previously only the current chart symbol was processed
+- **Grid Trading**: Each enabled symbol now maintains its own independent grid structure
+- **Random Trading**: Now randomly selects from all enabled symbols instead of only current chart symbol
+- **Order Management**: Proper symbol-specific order tracking and management
+
+#### Improved
+
+- **Trading Logic**: Complete separation of single-symbol and multi-symbol trading logic
+- **Price Handling**: Each symbol uses its own price data (`MarketInfo()` instead of `SymbolInfo()`)
+- **Error Handling**: Enhanced error checking for invalid symbol prices
+- **Logging**: More detailed logging with symbol-specific information
+
+#### Technical Changes
+
+- Maintained backward compatibility with original functions
+- Added comprehensive multi-symbol support without breaking existing functionality
+- Enhanced symbol selector interface integration
+- Improved code organization with clear function separation
+
+### 🎯 Impact
+- **Before**: Only current chart symbol would trade, other enabled symbols were ignored
+- **After**: All enabled symbols trade simultaneously according to selected mode (Grid/Random)
+- **Grid Mode**: Each symbol maintains independent grid levels and auto-adds positions
+- **Random Mode**: Randomly selects symbols from enabled list for each trade interval
+
+---
+
 ## [1.25] - 2025-10-01
 
 ### Added

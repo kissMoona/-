@@ -2,10 +2,25 @@
 //|                            Pi_Grid_Engine.mq4                    |
 //|                           Copyright 2024, Rex                    |
 //+------------------------------------------------------------------+
+//| VERSION HISTORY:                                                 |
+//| v1.30 (2025-10-02) - 多品种交易支持                              |
+//|   ✓ 修复多品种交易中随机和网格交易不生效的问题                    |
+//|   ✓ 新增 ManageLogic_Grid_MultiSymbol() 函数                    |
+//|   ✓ 新增 ManageLogic_Random_MultiSymbol() 函数                  |
+//|   ✓ 新增品种专用开单函数 OpenOrderForSymbol_Grid/Random()        |
+//|   ✓ 新增品种专用网格检查函数 CheckAndOpenGridOrders_ForSymbol()  |
+//|   ✓ 支持多品种同时运行网格和随机交易策略                          |
+//|   ✓ 优化品种选择器界面和交互体验                                  |
+//|                                                                  |
+//| v1.25 (Previous) - 基础网格和随机交易系统                        |
+//|   • 双模式交易系统（网格/随机）                                   |
+//|   • 品种选择器界面                                               |
+//|   • 基础风控和统计功能                                           |
+//+------------------------------------------------------------------+
 #property copyright "Copyright 2024, Rex"
 #property link      "https://github.com/kissMoona/-"
-#property version   "1.25"
-#property description "Π Grid Engine - Dual Mode Trading System"
+#property version   "1.30"
+#property description "Π Grid Engine - Multi-Symbol Trading System"
 #property strict
 
 //--- 输入参数
@@ -88,7 +103,7 @@ int OnInit()
     //--- 初始化品种列表
     LoadAvailableSymbols();
 
-    Print("[INIT] Π Grid Engine v1.25 Started");
+    Print("[INIT] Π Grid Engine v1.30 Started - Multi-Symbol Support");
     if(InpTradingMode == 0)
         Print("[INIT] Mode: Grid Trading | Grid Step: $", InpGridStep);
     else
@@ -169,11 +184,11 @@ void OnTick()
     if(!CheckDailyLossLimit())
         return;
 
-    //--- 执行交易逻辑
+    //--- 执行交易逻辑（支持多品种）
     if(InpTradingMode == 0)
-        ManageLogic_Grid();  // 网格交易
+        ManageLogic_Grid_MultiSymbol();  // 多品种网格交易
     else
-        ManageLogic_Random(); // 随机交易
+        ManageLogic_Random_MultiSymbol(); // 多品种随机交易
 }
 
 //+------------------------------------------------------------------+
@@ -306,7 +321,74 @@ string GenerateOrderComment(string prefix, string symbol_name, int order_number)
 }
 
 //+------------------------------------------------------------------+
-//| 网格交易逻辑                                                      |
+//| 多品种网格交易逻辑                                                |
+//+------------------------------------------------------------------+
+void ManageLogic_Grid_MultiSymbol()
+{
+    // 遍历所有启用的品种
+    for(int symbol_idx = 0; symbol_idx < ArraySize(g_available_symbols); symbol_idx++)
+    {
+        if(!g_symbol_enabled[symbol_idx]) continue; // 跳过未启用的品种
+        
+        string symbol = g_available_symbols[symbol_idx];
+        ManageLogic_Grid_ForSymbol(symbol, symbol_idx);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 单个品种的网格交易逻辑                                            |
+//+------------------------------------------------------------------+
+void ManageLogic_Grid_ForSymbol(string symbol, int symbol_idx)
+{
+    int magic_number = InpMagicNo;
+    
+    // 获取品种价格
+    double ask = MarketInfo(symbol, MODE_ASK);
+    double bid = MarketInfo(symbol, MODE_BID);
+    if(ask == 0 || bid == 0) return; // 价格无效
+    
+    double current_price = (ask + bid) / 2.0;
+    
+    //--- 检查该品种是否有持仓
+    int total_orders = 0;
+    for(int i = 0; i < OrdersTotal(); i++)
+    {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        {
+            if(OrderSymbol() == symbol && OrderMagicNumber() == magic_number)
+            {
+                total_orders++;
+            }
+        }
+    }
+    
+    //--- 如果没有持仓且未开过首单，开第一个订单
+    if(total_orders == 0 && !g_symbol_first_order_opened[symbol_idx])
+    {
+        int direction;
+        if(g_trade_mode == 1) // 只开多
+            direction = OP_BUY;
+        else if(g_trade_mode == 2) // 只开空
+            direction = OP_SELL;
+        else // 双向模式
+            direction = (MathRand() % 2 == 0) ? OP_BUY : OP_SELL;
+            
+        string comment = GenerateOrderComment("Grid", symbol, 1);
+        if(OpenOrderForSymbol_Grid(symbol, direction, current_price, comment))
+        {
+            g_today_orders++;
+            g_symbol_first_order_opened[symbol_idx] = true; // 标记已开首单
+            Print("═══ [网格] 首单开启 ═══ ", symbol, " | ", (direction == OP_BUY ? "多单" : "空单"), " | 价格: ", DoubleToString(current_price, (int)MarketInfo(symbol, MODE_DIGITS)));
+        }
+        return;
+    }
+    
+    //--- 检查是否需要在网格位置开新单
+    CheckAndOpenGridOrders_ForSymbol(symbol, current_price);
+}
+
+//+------------------------------------------------------------------+
+//| 网格交易逻辑（保持原有逻辑用于当前品种）                          |
 //+------------------------------------------------------------------+
 void ManageLogic_Grid()
 {
@@ -367,7 +449,70 @@ void ManageLogic_Grid()
 }
 
 //+------------------------------------------------------------------+
-//| 随机交易逻辑                                                      |
+//| 多品种随机交易逻辑                                                |
+//+------------------------------------------------------------------+
+void ManageLogic_Random_MultiSymbol()
+{
+    datetime current_time = TimeCurrent();
+    
+    //--- 检查开仓时间间隔
+    if(current_time - g_last_trade_time < InpRandomInterval)
+    {
+        return;
+    }
+    
+    //--- 更新开仓时间
+    g_last_trade_time = current_time;
+    
+    // 获取所有启用的品种
+    string enabled_symbols[];
+    int enabled_count = 0;
+    
+    for(int i = 0; i < ArraySize(g_available_symbols); i++)
+    {
+        if(g_symbol_enabled[i])
+        {
+            ArrayResize(enabled_symbols, enabled_count + 1);
+            enabled_symbols[enabled_count] = g_available_symbols[i];
+            enabled_count++;
+        }
+    }
+    
+    if(enabled_count == 0) return; // 没有启用的品种
+    
+    //--- 随机选择一个启用的品种
+    int random_idx = MathRand() % enabled_count;
+    string selected_symbol = enabled_symbols[random_idx];
+    
+    //--- 随机选择交易方向
+    int direction;
+    if(g_trade_mode == 1) // 只开多
+        direction = OP_BUY;
+    else if(g_trade_mode == 2) // 只开空
+        direction = OP_SELL;
+    else // 双向模式
+        direction = (MathRand() % 2 == 0) ? OP_BUY : OP_SELL;
+    
+    //--- 获取品种价格
+    double ask = MarketInfo(selected_symbol, MODE_ASK);
+    double bid = MarketInfo(selected_symbol, MODE_BID);
+    if(ask == 0 || bid == 0) return; // 价格无效
+    
+    double current_price = (ask + bid) / 2.0;
+    
+    //--- 生成订单备注
+    string comment = GenerateOrderComment("Random", selected_symbol, g_today_orders + 1);
+    
+    //--- 开单
+    if(OpenOrderForSymbol_Random(selected_symbol, direction, current_price, comment))
+    {
+        g_today_orders++;
+        Print("═══ [随机] 新单 ═══ ", selected_symbol, " | ", (direction == OP_BUY ? "多单" : "空单"), " | 价格: ", DoubleToString(current_price, (int)MarketInfo(selected_symbol, MODE_DIGITS)));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 随机交易逻辑（保持原有逻辑用于当前品种）                          |
 //+------------------------------------------------------------------+
 void ManageLogic_Random()
 {
@@ -404,6 +549,207 @@ void ManageLogic_Random()
         g_today_orders++;
         Print("═══ [随机] 新单 ═══ ", Symbol(), " | ", (direction == OP_BUY ? "多单" : "空单"), " | 价格: ", DoubleToString(current_price, _Digits));
     }
+}
+
+//+------------------------------------------------------------------+
+//| 为指定品种开网格订单                                              |
+//+------------------------------------------------------------------+
+bool OpenOrderForSymbol_Grid(string symbol, int direction, double target_price, string comment)
+{
+    double ask = MarketInfo(symbol, MODE_ASK);
+    double bid = MarketInfo(symbol, MODE_BID);
+    double point = MarketInfo(symbol, MODE_POINT);
+    int digits = (int)MarketInfo(symbol, MODE_DIGITS);
+    
+    if(ask == 0 || bid == 0) return false;
+    
+    //--- 计算SL和TP
+    double sl_price = 0;
+    double tp_price = 0;
+    double open_price;
+    
+    if(direction == OP_BUY)
+    {
+        open_price = ask;
+        if(InpBaseSL > 0)
+            sl_price = NormalizeDouble(ask - InpBaseSL * point, digits);
+        if(InpBaseTP > 0)
+            tp_price = NormalizeDouble(ask + InpBaseTP * point, digits);
+    }
+    else // OP_SELL
+    {
+        open_price = bid;
+        if(InpBaseSL > 0)
+            sl_price = NormalizeDouble(bid + InpBaseSL * point, digits);
+        if(InpBaseTP > 0)
+            tp_price = NormalizeDouble(bid - InpBaseTP * point, digits);
+    }
+    
+    int ticket = OrderSend(symbol, direction, InpLotSize, open_price, 3, sl_price, tp_price, 
+                          comment, InpMagicNo, 0, clrNONE);
+    
+    if(ticket > 0)
+    {
+        Print("✓ [网格] #", ticket, " | ", symbol, " | ", (direction == OP_BUY ? "多" : "空"), " | ", DoubleToString(open_price, digits), " | ", InpLotSize, "手");
+        return true;
+    }
+    else
+    {
+        int error = GetLastError();
+        Print("✖ [网格失败] ", symbol, " | ", (direction == OP_BUY ? "多单" : "空单"), " | 错误: ", error);
+        return false;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 为指定品种开随机订单                                              |
+//+------------------------------------------------------------------+
+bool OpenOrderForSymbol_Random(string symbol, int direction, double target_price, string comment)
+{
+    double ask = MarketInfo(symbol, MODE_ASK);
+    double bid = MarketInfo(symbol, MODE_BID);
+    double point = MarketInfo(symbol, MODE_POINT);
+    int digits = (int)MarketInfo(symbol, MODE_DIGITS);
+    
+    if(ask == 0 || bid == 0) return false;
+    
+    //--- 计算SL和TP
+    double sl_price = 0;
+    double tp_price = 0;
+    double open_price;
+    
+    if(direction == OP_BUY)
+    {
+        open_price = ask;
+        if(InpBaseSL > 0)
+            sl_price = NormalizeDouble(ask - InpBaseSL * point, digits);
+        if(InpBaseTP > 0)
+            tp_price = NormalizeDouble(ask + InpBaseTP * point, digits);
+    }
+    else // OP_SELL
+    {
+        open_price = bid;
+        if(InpBaseSL > 0)
+            sl_price = NormalizeDouble(bid + InpBaseSL * point, digits);
+        if(InpBaseTP > 0)
+            tp_price = NormalizeDouble(bid - InpBaseTP * point, digits);
+    }
+    
+    int ticket = OrderSend(symbol, direction, InpLotSize, open_price, 3, sl_price, tp_price, 
+                          comment, InpMagicNo, 0, clrNONE);
+    
+    if(ticket > 0)
+    {
+        Print("✓ [随机] #", ticket, " | ", symbol, " | ", (direction == OP_BUY ? "多" : "空"), " | ", DoubleToString(open_price, digits), " | ", InpLotSize, "手");
+        return true;
+    }
+    else
+    {
+        int error = GetLastError();
+        Print("✖ [随机失败] ", symbol, " | ", (direction == OP_BUY ? "多单" : "空单"), " | 错误: ", error);
+        return false;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 检查指定品种并在网格位置开单                                      |
+//+------------------------------------------------------------------+
+void CheckAndOpenGridOrders_ForSymbol(string symbol, double current_price)
+{
+    int magic_number = InpMagicNo;
+    double grid_step = InpGridStep;
+    
+    //--- 获取该品种所有已开订单的价格和类型
+    double order_prices[];
+    int order_types[];
+    int order_count = 0;
+    
+    ArrayResize(order_prices, 100);
+    ArrayResize(order_types, 100);
+    
+    for(int i = 0; i < OrdersTotal(); i++)
+    {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        {
+            if(OrderSymbol() == symbol && OrderMagicNumber() == magic_number)
+            {
+                order_prices[order_count] = OrderOpenPrice();
+                order_types[order_count] = OrderType();
+                order_count++;
+            }
+        }
+    }
+    
+    if(order_count == 0) return;
+    
+    //--- 找出最高和最低的订单价格
+    double highest_price = order_prices[0];
+    double lowest_price = order_prices[0];
+    
+    for(int i = 1; i < order_count; i++)
+    {
+        if(order_prices[i] > highest_price) highest_price = order_prices[i];
+        if(order_prices[i] < lowest_price) lowest_price = order_prices[i];
+    }
+    
+    //--- 检查是否需要在上方开多单
+    if(g_trade_mode != 2) // 非只开空模式
+    {
+        double next_buy_level = highest_price + grid_step;
+        if(current_price >= next_buy_level)
+        {
+            if(!HasOrderAtPrice_ForSymbol(symbol, next_buy_level, grid_step / 2.0))
+            {
+                string comment = GenerateOrderComment("Grid", symbol, order_count + 1);
+                if(OpenOrderForSymbol_Grid(symbol, OP_BUY, next_buy_level, comment))
+                {
+                    g_today_orders++;
+                    Print("▲ [网格-上涨] ", symbol, " | 多单 | ", DoubleToString(next_buy_level, (int)MarketInfo(symbol, MODE_DIGITS)), " | 今日: ", g_today_orders);
+                }
+            }
+        }
+    }
+    
+    //--- 检查是否需要在下方开空单
+    if(g_trade_mode != 1) // 非只开多模式
+    {
+        double next_sell_level = lowest_price - grid_step;
+        if(current_price <= next_sell_level)
+        {
+            if(!HasOrderAtPrice_ForSymbol(symbol, next_sell_level, grid_step / 2.0))
+            {
+                string comment = GenerateOrderComment("Grid", symbol, order_count + 1);
+                if(OpenOrderForSymbol_Grid(symbol, OP_SELL, next_sell_level, comment))
+                {
+                    g_today_orders++;
+                    Print("▼ [网格-下跌] ", symbol, " | 空单 | ", DoubleToString(next_sell_level, (int)MarketInfo(symbol, MODE_DIGITS)), " | 今日: ", g_today_orders);
+                }
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 检查指定品种指定价格附近是否已有订单                              |
+//+------------------------------------------------------------------+
+bool HasOrderAtPrice_ForSymbol(string symbol, double price, double tolerance)
+{
+    int magic_number = InpMagicNo;
+    
+    for(int i = 0; i < OrdersTotal(); i++)
+    {
+        if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        {
+            if(OrderSymbol() == symbol && OrderMagicNumber() == magic_number)
+            {
+                if(MathAbs(OrderOpenPrice() - price) < tolerance)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 //+------------------------------------------------------------------+
@@ -1561,50 +1907,19 @@ void OpenOrderForSymbol(string symbol, int symbol_index)
     else // 双向模式，随机选择
         direction = (MathRand() % 2 == 0) ? OP_BUY : OP_SELL;
     
-    // 计算SL和TP
-    double sl_price = 0;
-    double tp_price = 0;
-    double open_price;
-    
-    if(direction == OP_BUY)
-    {
-        open_price = ask;
-        if(InpBaseSL > 0)
-            sl_price = NormalizeDouble(ask - InpBaseSL * point, digits);
-        if(InpBaseTP > 0)
-            tp_price = NormalizeDouble(ask + InpBaseTP * point, digits);
-    }
-    else // OP_SELL
-    {
-        open_price = bid;
-        if(InpBaseSL > 0)
-            sl_price = NormalizeDouble(bid + InpBaseSL * point, digits);
-        if(InpBaseTP > 0)
-            tp_price = NormalizeDouble(bid - InpBaseTP * point, digits);
-    }
+    double current_price = (ask + bid) / 2.0;
     
     // 生成订单备注
     string comment = GenerateOrderComment("Multi", symbol, 1);
     
-    // 开单
-    int ticket = OrderSend(symbol, direction, InpLotSize, open_price, 3, sl_price, tp_price, 
-                          comment, InpMagicNo, 0, clrNONE);
-    
-    if(ticket > 0)
+    // 使用统一的开单函数
+    if(OpenOrderForSymbol_Grid(symbol, direction, current_price, comment))
     {
         g_today_orders++;
         g_symbol_first_order_opened[symbol_index] = true; // 标记已开首单
         Print("[MULTI-SYMBOL] Order Opened | Symbol: ", symbol, 
-              " | Ticket: ", ticket, 
               " | Direction: ", (direction == OP_BUY ? "BUY" : "SELL"), 
-              " | Price: ", DoubleToString(open_price, digits));
-    }
-    else
-    {
-        int error = GetLastError();
-        Print("[ERROR] Order Failed | Symbol: ", symbol, 
-              " | Error: ", error, 
-              " | Direction: ", (direction == OP_BUY ? "BUY" : "SELL"));
+              " | Price: ", DoubleToString(current_price, digits));
     }
 }
 

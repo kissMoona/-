@@ -1,14 +1,21 @@
 # Π Grid Engine
 
-A professional dual-mode trading Expert Advisor for MetaTrader 4.
+A professional multi-symbol trading Expert Advisor for MetaTrader 4 with advanced grid and random trading capabilities.
 
 ## 🎯 Features
+
+### 🚀 Multi-Symbol Trading (v1.30+)
+- **Multi-Symbol Grid Trading**: Simultaneous grid trading across multiple symbols
+- **Multi-Symbol Random Trading**: Random trading selection from enabled symbols pool
+- **Independent Grid Management**: Each symbol maintains its own grid structure
+- **Visual Symbol Selector**: Easy enable/disable symbols with color-coded interface
 
 ### Trading Modes
 - **Grid Trading Mode**: Automated grid-based trading with configurable step size
 - **Random Trading Mode**: Time-interval based random direction trading
 
 ### Core Functions
+- ✅ Multi-symbol trading support
 - ✅ Dual trading mode support (Grid / Random)
 - ✅ Bidirectional / Buy Only / Sell Only modes
 - ✅ Breakeven protection
@@ -16,6 +23,7 @@ A professional dual-mode trading Expert Advisor for MetaTrader 4.
 - ✅ Multi-level alert system
 - ✅ Daily statistics tracking
 - ✅ One-click position closing
+- ✅ Interactive symbol selector
 
 ### Alert System
 - Position count alerts
@@ -74,6 +82,18 @@ Three buttons for manual control:
 - **Sell Only**: Toggle sell-only mode
 
 ## 📝 Version History
+
+### v1.30 (2025-10-02) - Current
+- 🚀 **Multi-Symbol Trading Support**
+- Multi-symbol grid and random trading
+- Independent grid management per symbol
+- Visual symbol selector interface
+- Enhanced error handling and logging
+
+### v1.25 (2025-10-01)
+- Enhanced UI and server information
+- Professional information alignment
+- Improved symbol selector layout
 
 ### v1.20 (2025-10-01)
 - Initial release
