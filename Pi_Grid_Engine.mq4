@@ -3,7 +3,7 @@
 //|                           Copyright 2024, Rex                    |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, Rex"
-#property link      "https://github.com/yourname/Pi_Grid_Engine"
+#property link      "https://github.com/kissMoona/-"
 #property version   "1.21"
 #property description "Π Grid Engine - Dual Mode Trading System"
 #property strict
