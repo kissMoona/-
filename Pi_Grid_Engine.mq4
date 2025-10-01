@@ -2,21 +2,6 @@
 //|                            Pi_Grid_Engine.mq4                    |
 //|                           Copyright 2024, Rex                    |
 //+------------------------------------------------------------------+
-//| VERSION HISTORY:                                                 |
-//| v1.30 (2025-10-02) - 多品种交易支持                              |
-//|   ✓ 修复多品种交易中随机和网格交易不生效的问题                    |
-//|   ✓ 新增 ManageLogic_Grid_MultiSymbol() 函数                    |
-//|   ✓ 新增 ManageLogic_Random_MultiSymbol() 函数                  |
-//|   ✓ 新增品种专用开单函数 OpenOrderForSymbol_Grid/Random()        |
-//|   ✓ 新增品种专用网格检查函数 CheckAndOpenGridOrders_ForSymbol()  |
-//|   ✓ 支持多品种同时运行网格和随机交易策略                          |
-//|   ✓ 优化品种选择器界面和交互体验                                  |
-//|                                                                  |
-//| v1.25 (Previous) - 基础网格和随机交易系统                        |
-//|   • 双模式交易系统（网格/随机）                                   |
-//|   • 品种选择器界面                                               |
-//|   • 基础风控和统计功能                                           |
-//+------------------------------------------------------------------+
 #property copyright "Copyright 2024, Rex"
 #property link      "https://github.com/kissMoona/-"
 #property version   "1.30"
@@ -301,23 +286,45 @@ void GetPositionStats(int &long_pos, int &short_pos, double &total_pl)
 }
 
 //+------------------------------------------------------------------+
-//| 生成订单备注                                                      |
+//| 生成统一订单备注                                                  |
 //+------------------------------------------------------------------+
-string GenerateOrderComment(string prefix, string symbol_name, int order_number)
+string GenerateOrderComment(string mode, string symbol_name, int order_type, int order_number)
 {
-    // 格式：[模式]-品种-序号-日期时间
-    // 例如：Grid-XAUUSD-#15-1001_1046
+    // 统一格式：Π[模式][方向]-品种-#序号-时间
+    // 例如：ΠGrid[B]-XAUUSD-#15-1002_0647
+    //      ΠRand[S]-AUDCAD-#8-1002_0648
     
     MqlDateTime dt;
     TimeToStruct(TimeCurrent(), dt);
     
+    // 生成时间戳（月日_时分）
     string time_str = StringFormat("%02d%02d_%02d%02d", 
         dt.mon, dt.day, dt.hour, dt.min);
     
-    string comment = StringFormat("%s-%s-#%d-%s", 
-        prefix, symbol_name, order_number, time_str);
+    // 方向标识
+    string direction = "";
+    if(order_type == OP_BUY) direction = "[B]";
+    else if(order_type == OP_SELL) direction = "[S]";
+    
+    // 清理品种名称（移除.e等后缀）
+    string clean_symbol = symbol_name;
+    if(StringFind(symbol_name, ".e") > 0)
+        clean_symbol = StringSubstr(symbol_name, 0, StringFind(symbol_name, ".e"));
+    
+    // 生成统一格式备注
+    string comment = StringFormat("Π%s%s-%s-#%d-%s", 
+        mode, direction, clean_symbol, order_number, time_str);
     
     return comment;
+}
+
+//+------------------------------------------------------------------+
+//| 生成订单备注（兼容旧版本）                                        |
+//+------------------------------------------------------------------+
+string GenerateOrderComment(string prefix, string symbol_name, int order_number)
+{
+    // 为保持兼容性，默认使用多单方向
+    return GenerateOrderComment(prefix, symbol_name, OP_BUY, order_number);
 }
 
 //+------------------------------------------------------------------+
@@ -373,7 +380,7 @@ void ManageLogic_Grid_ForSymbol(string symbol, int symbol_idx)
         else // 双向模式
             direction = (MathRand() % 2 == 0) ? OP_BUY : OP_SELL;
             
-        string comment = GenerateOrderComment("Grid", symbol, 1);
+        string comment = GenerateOrderComment("Grid", symbol, direction, 1);
         if(OpenOrderForSymbol_Grid(symbol, direction, current_price, comment))
         {
             g_today_orders++;
@@ -432,7 +439,7 @@ void ManageLogic_Grid()
         else // 双向模式
             direction = (MathRand() % 2 == 0) ? OP_BUY : OP_SELL;
             
-        string comment = GenerateOrderComment("Grid", Symbol(), 1);
+        string comment = GenerateOrderComment("Grid", Symbol(), direction, 1);
         if(OpenOrder(direction, current_price, comment))
         {
             g_first_order_price = current_price;
@@ -501,7 +508,7 @@ void ManageLogic_Random_MultiSymbol()
     double current_price = (ask + bid) / 2.0;
     
     //--- 生成订单备注
-    string comment = GenerateOrderComment("Random", selected_symbol, g_today_orders + 1);
+    string comment = GenerateOrderComment("Rand", selected_symbol, direction, g_today_orders + 1);
     
     //--- 开单
     if(OpenOrderForSymbol_Random(selected_symbol, direction, current_price, comment))
@@ -541,7 +548,7 @@ void ManageLogic_Random()
     double current_price = (SymbolInfoDouble(Symbol(), SYMBOL_ASK) + SymbolInfoDouble(Symbol(), SYMBOL_BID)) / 2.0;
     
     //--- 生成订单备注
-    string comment = GenerateOrderComment("Random", Symbol(), g_today_orders + 1);
+    string comment = GenerateOrderComment("Rand", Symbol(), direction, g_today_orders + 1);
     
     //--- 开单
     if(OpenOrder(direction, current_price, comment))
@@ -700,7 +707,7 @@ void CheckAndOpenGridOrders_ForSymbol(string symbol, double current_price)
         {
             if(!HasOrderAtPrice_ForSymbol(symbol, next_buy_level, grid_step / 2.0))
             {
-                string comment = GenerateOrderComment("Grid", symbol, order_count + 1);
+                string comment = GenerateOrderComment("Grid", symbol, OP_BUY, order_count + 1);
                 if(OpenOrderForSymbol_Grid(symbol, OP_BUY, next_buy_level, comment))
                 {
                     g_today_orders++;
@@ -718,7 +725,7 @@ void CheckAndOpenGridOrders_ForSymbol(string symbol, double current_price)
         {
             if(!HasOrderAtPrice_ForSymbol(symbol, next_sell_level, grid_step / 2.0))
             {
-                string comment = GenerateOrderComment("Grid", symbol, order_count + 1);
+                string comment = GenerateOrderComment("Grid", symbol, OP_SELL, order_count + 1);
                 if(OpenOrderForSymbol_Grid(symbol, OP_SELL, next_sell_level, comment))
                 {
                     g_today_orders++;
@@ -801,7 +808,7 @@ void CheckAndOpenGridOrders(double current_price)
         {
             if(!HasOrderAtPrice(next_buy_level, grid_step / 2.0))
             {
-                string comment = GenerateOrderComment("Grid", Symbol(), order_count + 1);
+                string comment = GenerateOrderComment("Grid", Symbol(), OP_BUY, order_count + 1);
                 if(OpenOrder(OP_BUY, next_buy_level, comment))
                 {
                     g_today_orders++;
@@ -819,7 +826,7 @@ void CheckAndOpenGridOrders(double current_price)
         {
             if(!HasOrderAtPrice(next_sell_level, grid_step / 2.0))
             {
-                string comment = GenerateOrderComment("Grid", Symbol(), order_count + 1);
+                string comment = GenerateOrderComment("Grid", Symbol(), OP_SELL, order_count + 1);
                 if(OpenOrder(OP_SELL, next_sell_level, comment))
                 {
                     g_today_orders++;
@@ -1910,7 +1917,7 @@ void OpenOrderForSymbol(string symbol, int symbol_index)
     double current_price = (ask + bid) / 2.0;
     
     // 生成订单备注
-    string comment = GenerateOrderComment("Multi", symbol, 1);
+    string comment = GenerateOrderComment("Multi", symbol, direction, 1);
     
     // 使用统一的开单函数
     if(OpenOrderForSymbol_Grid(symbol, direction, current_price, comment))
