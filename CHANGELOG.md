@@ -2,6 +2,29 @@
 
 All notable changes to Π Grid Engine will be documented in this file.
 
+## [1.25] - 2025-10-01
+
+### Added
+
+- **Comprehensive Server Information**: Added server name, account number, connection status, and trade permissions display
+- **Enhanced Account Information**: Added free margin, leverage ratio, account currency, and account type (demo/real) display
+- **Professional Information Alignment**: Implemented fixed-width column layout (40px labels, 90px values) for consistent alignment
+
+### Improved
+
+- **Symbol Selector Layout**: Optimized to 9 columns with better spacing (75px width, 5px spacing)
+- **Panel Dimensions**: Increased panel height to 380px to accommodate new information
+- **Button Positioning**: Adjusted control buttons to Y+390 for proper layout
+- **Visual Consistency**: All panel sections now use uniform alignment for professional appearance
+
+### Technical
+
+- Enhanced UI responsiveness with better space utilization
+- Improved code organization for information display functions
+- Consistent styling across all panel components
+
+---
+
 ## [1.21] - 2025-10-01
 
 ### Fixed
