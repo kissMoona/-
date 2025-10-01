@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, Rex"
 #property link      "https://github.com/kissMoona/-"
-#property version   "1.21"
+#property version   "1.25"
 #property description "Π Grid Engine - Dual Mode Trading System"
 #property strict
 
@@ -88,7 +88,7 @@ int OnInit()
     //--- 初始化品种列表
     LoadAvailableSymbols();
 
-    Print("[INIT] Π Grid Engine v1.21 Started");
+    Print("[INIT] Π Grid Engine v1.25 Started");
     if(InpTradingMode == 0)
         Print("[INIT] Mode: Grid Trading | Grid Step: $", InpGridStep);
     else
@@ -98,9 +98,9 @@ int OnInit()
     if(InpShowPanel)
     {
         // 操作按钮（放在面板外部下方，确保可见）
-        CreateButton("YDA_Btn_CloseAll", InpPanelX + 10, InpPanelY + 330, 140, 28, "一键平仓", clrWhite, C'180,50,50');
-        CreateButton("YDA_Btn_BuyOnly", InpPanelX + 160, InpPanelY + 330, 140, 28, "只开多", clrWhite, C'60,60,80');
-        CreateButton("YDA_Btn_SellOnly", InpPanelX + 310, InpPanelY + 330, 140, 28, "只开空", clrWhite, C'60,60,80');
+        CreateButton("YDA_Btn_CloseAll", InpPanelX + 10, InpPanelY + 390, 140, 28, "一键平仓", clrWhite, C'180,50,50');
+        CreateButton("YDA_Btn_BuyOnly", InpPanelX + 160, InpPanelY + 390, 140, 28, "只开多", clrWhite, C'60,60,80');
+        CreateButton("YDA_Btn_SellOnly", InpPanelX + 310, InpPanelY + 390, 140, 28, "只开空", clrWhite, C'60,60,80');
         
         
         // 品种选择器说明文字（不需要翻页按钮了）
@@ -732,7 +732,7 @@ void UpdateDashboard()
         ObjectSetInteger(0, bg_name, OBJPROP_XDISTANCE, InpPanelX);
         ObjectSetInteger(0, bg_name, OBJPROP_YDISTANCE, InpPanelY);
         ObjectSetInteger(0, bg_name, OBJPROP_XSIZE, 460);
-        ObjectSetInteger(0, bg_name, OBJPROP_YSIZE, 320);  // 减小面板高度，为按钮留出空间
+        ObjectSetInteger(0, bg_name, OBJPROP_YSIZE, 380);  // 继续增加面板高度，容纳服务器信息
         ObjectSetInteger(0, bg_name, OBJPROP_BGCOLOR, C'15,15,25');  // 深蓝黑色
         ObjectSetInteger(0, bg_name, OBJPROP_BORDER_TYPE, BORDER_FLAT);
         ObjectSetInteger(0, bg_name, OBJPROP_BORDER_COLOR, C'100,180,255');
@@ -749,6 +749,10 @@ void UpdateDashboard()
     int x_pos = InpPanelX + 15;
     int x_pos2 = InpPanelX + 245; // 第二列
     int line_height = 16;
+    
+    // 使用固定宽度对齐 - 标签列宽度40，数值列宽度90
+    int label_width = 40;   // 标签列宽度
+    int value_width = 90;   // 数值列宽度
 
     // 标题（更大更醒目）
     string title_text = "Π GRID ENGINE";
@@ -776,19 +780,19 @@ void UpdateDashboard()
     y_pos += line_height;
     
     CreateLabel("YDA_Panel_LongLabel", x_pos, y_pos, "多单", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_Long", x_pos + 50, y_pos, (string)long_positions, C'0,255,100', 10);
+    CreateLabel("YDA_Panel_Long", x_pos + label_width, y_pos, (string)long_positions, C'0,255,100', 10);
     CreateLabel("YDA_Panel_ShortLabel", x_pos2, y_pos, "空单", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_Short", x_pos2 + 50, y_pos, (string)short_positions, C'255,100,100', 10);
+    CreateLabel("YDA_Panel_Short", x_pos2 + label_width, y_pos, (string)short_positions, C'255,100,100', 10);
     y_pos += line_height;
     
     CreateLabel("YDA_Panel_TotalLabel", x_pos, y_pos, "总持仓", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_Total", x_pos + 50, y_pos, (string)total_positions, C'200,200,200', 10);
+    CreateLabel("YDA_Panel_Total", x_pos + label_width, y_pos, (string)total_positions, C'200,200,200', 10);
     CreateLabel("YDA_Panel_LockedLabel", x_pos2, y_pos, "锁仓对", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_Locked", x_pos2 + 50, y_pos, (string)locked_pairs, C'255,200,0', 10);
+    CreateLabel("YDA_Panel_Locked", x_pos2 + label_width, y_pos, (string)locked_pairs, C'255,200,0', 10);
     y_pos += line_height;
     
     CreateLabel("YDA_Panel_MaxPosLabel", x_pos, y_pos, "最大值", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_MaxPos", x_pos + 50, y_pos, (string)g_max_positions, C'120,120,150', 9);
+    CreateLabel("YDA_Panel_MaxPos", x_pos + label_width, y_pos, (string)g_max_positions, C'120,120,150', 9);
     
     // 交易模式
     string mode_text = "";
@@ -797,7 +801,7 @@ void UpdateDashboard()
     else if(g_trade_mode == 1) { mode_text = "只开多"; mode_color = C'0,255,100'; }
     else if(g_trade_mode == 2) { mode_text = "只开空"; mode_color = C'255,100,100'; }
     CreateLabel("YDA_Panel_TradeModeLabel", x_pos2, y_pos, "模式", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_TradeMode", x_pos2 + 50, y_pos, mode_text, mode_color, 9);
+    CreateLabel("YDA_Panel_TradeMode", x_pos2 + label_width, y_pos, mode_text, mode_color, 9);
     y_pos += line_height + 3;
     
     // 分隔线
@@ -809,20 +813,70 @@ void UpdateDashboard()
     y_pos += line_height;
     
     CreateLabel("YDA_Panel_BalanceLabel", x_pos, y_pos, "余额", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_Balance", x_pos + 50, y_pos, "$" + DoubleToString(account_balance, 2), C'200,200,200', 10);
+    CreateLabel("YDA_Panel_Balance", x_pos + label_width, y_pos, "$" + DoubleToString(account_balance, 2), C'200,200,200', 10);
     CreateLabel("YDA_Panel_EquityLabel", x_pos2, y_pos, "净值", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_Equity", x_pos2 + 50, y_pos, "$" + DoubleToString(account_equity, 2), C'200,200,200', 10);
+    CreateLabel("YDA_Panel_Equity", x_pos2 + label_width, y_pos, "$" + DoubleToString(account_equity, 2), C'200,200,200', 10);
     y_pos += line_height;
     
     color pl_color = (floating_pl >= 0) ? C'0,255,100' : C'255,100,100';
     string pl_sign = (floating_pl >= 0) ? "+" : "";
     CreateLabel("YDA_Panel_FloatPLLabel", x_pos, y_pos, "浮动", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_FloatPL", x_pos + 50, y_pos, pl_sign + "$" + DoubleToString(floating_pl, 2), pl_color, 10);
+    CreateLabel("YDA_Panel_FloatPL", x_pos + label_width, y_pos, pl_sign + "$" + DoubleToString(floating_pl, 2), pl_color, 10);
     
     double margin_percent_display = (margin_free > 0) ? (margin_used / (margin_used + margin_free) * 100.0) : 0;
     color margin_color = (margin_percent_display > 80) ? C'255,100,100' : (margin_percent_display > 60) ? C'255,200,0' : C'0,255,100';
     CreateLabel("YDA_Panel_MarginLabel", x_pos2, y_pos, "保证金", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_Margin", x_pos2 + 50, y_pos, DoubleToString(margin_percent_display, 1) + "%", margin_color, 10);
+    CreateLabel("YDA_Panel_Margin", x_pos2 + label_width, y_pos, DoubleToString(margin_percent_display, 1) + "%", margin_color, 10);
+    y_pos += line_height;
+    
+    // 添加更多账户信息
+    CreateLabel("YDA_Panel_FreeMarginLabel", x_pos, y_pos, "可用", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_FreeMargin", x_pos + label_width, y_pos, "$" + DoubleToString(margin_free, 2), C'200,200,200', 10);
+    
+    // 账户杠杆
+    int account_leverage = AccountLeverage();
+    CreateLabel("YDA_Panel_LeverageLabel", x_pos2, y_pos, "杠杆", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Leverage", x_pos2 + label_width, y_pos, "1:" + (string)account_leverage, C'200,200,200', 10);
+    y_pos += line_height;
+    
+    // 账户货币和服务器
+    string account_currency = AccountCurrency();
+    CreateLabel("YDA_Panel_CurrencyLabel", x_pos, y_pos, "货币", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Currency", x_pos + label_width, y_pos, account_currency, C'200,200,200', 10);
+    
+    // 账户类型
+    string account_type = "";
+    if(IsDemo()) account_type = "模拟";
+    else account_type = "真实";
+    CreateLabel("YDA_Panel_AccountTypeLabel", x_pos2, y_pos, "类型", C'150,150,180', 9);
+    color account_type_color = IsDemo() ? C'255,200,0' : C'0,255,100';
+    CreateLabel("YDA_Panel_AccountType", x_pos2 + label_width, y_pos, account_type, account_type_color, 10);
+    y_pos += line_height;
+    
+    // 服务器信息
+    string server_name = AccountServer();
+    CreateLabel("YDA_Panel_ServerLabel", x_pos, y_pos, "服务器", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Server", x_pos + label_width, y_pos, server_name, C'200,200,200', 10);
+    
+    // 账户号码
+    int account_number = AccountNumber();
+    CreateLabel("YDA_Panel_AccountNumLabel", x_pos2, y_pos, "账号", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_AccountNum", x_pos2 + label_width, y_pos, (string)account_number, C'200,200,200', 10);
+    y_pos += line_height;
+    
+    // 连接状态和延迟
+    bool is_connected = IsConnected();
+    string connection_status = is_connected ? "已连接" : "断开";
+    color connection_color = is_connected ? C'0,255,100' : C'255,100,100';
+    CreateLabel("YDA_Panel_ConnectionLabel", x_pos, y_pos, "连接", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_Connection", x_pos + label_width, y_pos, connection_status, connection_color, 10);
+    
+    // 交易许可状态
+    bool trade_allowed = IsTradeAllowed();
+    string trade_status = trade_allowed ? "允许" : "禁止";
+    color trade_color = trade_allowed ? C'0,255,100' : C'255,100,100';
+    CreateLabel("YDA_Panel_TradeAllowedLabel", x_pos2, y_pos, "交易", C'150,150,180', 9);
+    CreateLabel("YDA_Panel_TradeAllowed", x_pos2 + label_width, y_pos, trade_status, trade_color, 10);
     y_pos += line_height + 3;
     
     // 分隔线
@@ -834,12 +888,12 @@ void UpdateDashboard()
     y_pos += line_height;
     
     CreateLabel("YDA_Panel_TodayOrdersLabel", x_pos, y_pos, "开单数", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_TodayOrders", x_pos + 50, y_pos, (string)g_today_orders, C'200,200,200', 10);
+    CreateLabel("YDA_Panel_TodayOrders", x_pos + label_width, y_pos, (string)g_today_orders, C'200,200,200', 10);
     
     color today_pl_color = (g_today_profit >= 0) ? C'0,255,100' : C'255,100,100';
     string today_pl_sign = (g_today_profit >= 0) ? "+" : "";
     CreateLabel("YDA_Panel_TodayPLLabel", x_pos2, y_pos, "盈亏", C'150,150,180', 9);
-    CreateLabel("YDA_Panel_TodayPL", x_pos2 + 50, y_pos, today_pl_sign + "$" + DoubleToString(g_today_profit, 2), today_pl_color, 10);
+    CreateLabel("YDA_Panel_TodayPL", x_pos2 + label_width, y_pos, today_pl_sign + "$" + DoubleToString(g_today_profit, 2), today_pl_color, 10);
     y_pos += line_height;
     
     // 日亏损限制已移除
@@ -1012,17 +1066,17 @@ void EnsureButtonsExist()
     // 检查并重新创建操作按钮
     if(ObjectFind(0, "YDA_Btn_CloseAll") < 0)
     {
-        CreateButton("YDA_Btn_CloseAll", InpPanelX + 10, InpPanelY + 330, 140, 28, "一键平仓", clrWhite, C'180,50,50');
+        CreateButton("YDA_Btn_CloseAll", InpPanelX + 10, InpPanelY + 390, 140, 28, "一键平仓", clrWhite, C'180,50,50');
     }
     
     if(ObjectFind(0, "YDA_Btn_BuyOnly") < 0)
     {
-        CreateButton("YDA_Btn_BuyOnly", InpPanelX + 160, InpPanelY + 330, 140, 28, "只开多", clrWhite, C'60,60,80');
+        CreateButton("YDA_Btn_BuyOnly", InpPanelX + 160, InpPanelY + 390, 140, 28, "只开多", clrWhite, C'60,60,80');
     }
     
     if(ObjectFind(0, "YDA_Btn_SellOnly") < 0)
     {
-        CreateButton("YDA_Btn_SellOnly", InpPanelX + 310, InpPanelY + 330, 140, 28, "只开空", clrWhite, C'60,60,80');
+        CreateButton("YDA_Btn_SellOnly", InpPanelX + 310, InpPanelY + 390, 140, 28, "只开空", clrWhite, C'60,60,80');
     }
 }
 
@@ -1343,8 +1397,8 @@ void DisplaySymbolSelector(int panel_x, int panel_y)
         ObjectSetInteger(0, selector_bg, OBJPROP_CORNER, 0);
         ObjectSetInteger(0, selector_bg, OBJPROP_XDISTANCE, panel_x + 470);
         ObjectSetInteger(0, selector_bg, OBJPROP_YDISTANCE, panel_y);
-        ObjectSetInteger(0, selector_bg, OBJPROP_XSIZE, 850);  // 超宽显示
-        ObjectSetInteger(0, selector_bg, OBJPROP_YSIZE, 350);
+        ObjectSetInteger(0, selector_bg, OBJPROP_XSIZE, 820);  // 调整宽度
+        ObjectSetInteger(0, selector_bg, OBJPROP_YSIZE, 320);  // 调整高度
         ObjectSetInteger(0, selector_bg, OBJPROP_BGCOLOR, C'10,10,20');
         ObjectSetInteger(0, selector_bg, OBJPROP_BORDER_TYPE, BORDER_FLAT);
         ObjectSetInteger(0, selector_bg, OBJPROP_BORDER_COLOR, C'100,180,255');
@@ -1353,8 +1407,8 @@ void DisplaySymbolSelector(int panel_x, int panel_y)
         ObjectSetInteger(0, selector_bg, OBJPROP_SELECTABLE, false);
     }
     
-    // 显示标题和说明
-    CreateLabel("YDA_SymbolSelector_Title", panel_x + 820, panel_y + 10, "多品种交易", C'100,180,255', 11);
+    // 显示标题和说明（居中对齐）
+    CreateLabel("YDA_SymbolSelector_Title", panel_x + 780, panel_y + 10, "多品种交易", C'100,180,255', 11);
     
     // 统计启用的品种数
     int enabled_count = 0;
@@ -1362,34 +1416,34 @@ void DisplaySymbolSelector(int panel_x, int panel_y)
     {
         if(g_symbol_enabled[j]) enabled_count++;
     }
-    CreateLabel("YDA_SymbolSelector_Count", panel_x + 815, panel_y + 28, 
+    CreateLabel("YDA_SymbolSelector_Count", panel_x + 775, panel_y + 28, 
         "已启用: " + (string)enabled_count, C'0,255,100', 9);
     
-    // 分隔线
-    CreateLabel("YDA_SymbolSelector_Sep", panel_x + 480, panel_y + 46, 
-        "__________________________________________________________________", C'50,50,80', 8);
+    // 分隔线（调整长度和位置）
+    CreateLabel("YDA_SymbolSelector_Sep", panel_x + 485, panel_y + 46, 
+        "____________________________________________________________", C'50,50,80', 8);
     
-    // 显示品种网格（10列超宽布局）
+    // 显示品种网格（优化布局）
     int total_symbols = ArraySize(g_available_symbols);
     int start_idx = 0;  // 显示所有品种，不分页
     int end_idx = total_symbols;
     
-    int btn_width = 80;
-    int btn_height = 24;
-    int btn_spacing_x = 3;
-    int btn_spacing_y = 2;
-    int start_x = panel_x + 480;
-    int start_y = panel_y + 56;
+    int btn_width = 75;   // 稍微减小按钮宽度
+    int btn_height = 22;  // 稍微减小按钮高度
+    int btn_spacing_x = 5; // 增加水平间距
+    int btn_spacing_y = 4; // 增加垂直间距
+    int start_x = panel_x + 485; // 稍微右移起始位置
+    int start_y = panel_y + 60;  // 稍微下移起始位置
     
     int display_count = 0;
-    int cols_per_row = 10; // 每行10列超宽布局
+    int cols_per_row = 9; // 每行9列布局，避免过于拥挤
     
     for(int i = start_idx; i < end_idx; i++)
     {
         string symbol = g_available_symbols[i];
         string btn_name = "YDA_Btn_Symbol_" + (string)i;
         
-        // 计算网格位置（10列布局）
+        // 计算网格位置（9列布局）
         int row = display_count / cols_per_row;
         int col = display_count % cols_per_row;
         int x_pos = start_x + col * (btn_width + btn_spacing_x);
